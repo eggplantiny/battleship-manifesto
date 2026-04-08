@@ -1,8 +1,13 @@
+import type { LLMClient, LLMProvider } from "../llm/client.js";
+import { createLLMClient } from "../llm/factory.js";
 import type { BattleshipEffectTelemetryStore } from "./effect-telemetry.js";
 
 export interface BattleshipEffectOptions {
+  provider?: LLMProvider;
   model?: string;
   baseUrl?: string;
+  apiKey?: string;
+  client?: LLMClient;
   telemetry?: BattleshipEffectTelemetryStore;
 }
 
@@ -33,7 +38,12 @@ const DEFAULT_BASE_URL = "http://localhost:11434";
 
 export function createBattleshipEffects(options: BattleshipEffectOptions = {}) {
   const model = options.model ?? DEFAULT_MODEL;
-  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+  const client = options.client ?? createLLMClient({
+    provider: options.provider,
+    model,
+    baseUrl: options.baseUrl ?? DEFAULT_BASE_URL,
+    apiKey: options.apiKey,
+  });
   const telemetry = options.telemetry;
 
   return {
@@ -46,31 +56,10 @@ export function createBattleshipEffects(options: BattleshipEffectOptions = {}) {
       }
 
       try {
-        const response = await fetch(`${baseUrl}/api/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model,
-            stream: false,
-            messages: [
-              { role: "system", content: input.systemPrompt },
-              { role: "user", content: input.userPrompt },
-            ],
-          }),
-        });
-
-        if (!response.ok) {
-          return createFailurePatches(
-            `ollama_${response.status}_${response.statusText}`,
-            Date.now() - startedAt,
-            telemetry,
-          );
-        }
-
-        const data = await response.json() as { message?: { content?: unknown } };
-        const rawResponse = typeof data.message?.content === "string"
-          ? data.message.content.trim()
-          : "";
+        const rawResponse = (await client.chat([
+          { role: "system", content: input.systemPrompt },
+          { role: "user", content: input.userPrompt },
+        ])).trim();
         const parsed = parseDecision(
           rawResponse,
           input.candidateCellsCsv,

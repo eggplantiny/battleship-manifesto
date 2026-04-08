@@ -4,11 +4,12 @@ import {
   createBattleshipRuntime,
   createBattleshipWorldRuntime,
 } from "../../src/domain/wire.js";
-import { ManifestoBridge } from "../../src/agent/core/bridge.js";
+import { ManifestoBridge } from "../../src/runtime/bridge.js";
 import { loadBoard, getAllBoardIds } from "../../src/board/boards.js";
-import { playGame, type GameResult } from "../../src/agent/runner.js";
-import { createStrategy, type StrategyName } from "../../src/agent/strategies/create-strategy.js";
-import type { BeliefKind } from "../../src/agent/belief-state.js";
+import { playGame, type GameResult } from "../../src/runtime/runner.js";
+import { createStrategy, type StrategyName } from "../../src/strategies/create-strategy.js";
+import type { BeliefKind } from "../../src/belief/belief-state.js";
+import type { LLMProvider } from "../../src/llm/client.js";
 import { createFileExperimentLogger, createRunId } from "./file-experiment-logger.js";
 
 export type ProtocolName = "paper" | "oracle" | "custom";
@@ -22,6 +23,12 @@ export interface StrategyExperimentOptions {
   model: string;
   decisionModel?: string;
   explainModel?: string;
+  llmProvider?: LLMProvider;
+  llmBaseUrl?: string;
+  decisionProvider?: LLMProvider;
+  decisionBaseUrl?: string;
+  explainProvider?: LLMProvider;
+  explainBaseUrl?: string;
   label?: string;
   logDir?: string;
   epsilon?: number;
@@ -34,6 +41,7 @@ export interface StrategyExperimentOptions {
   lateBudget?: number;
   confidenceThreshold?: number;
   revisionCooldown?: number;
+  minRevisionDelta?: number;
   revisionEnabled?: boolean;
   llmRevisionEnabled?: boolean;
   llmRevisionBudget?: number;
@@ -54,6 +62,12 @@ export interface ResolvedStrategyExperimentOptions {
   model: string;
   decisionModel?: string;
   explainModel?: string;
+  llmProvider?: LLMProvider;
+  llmBaseUrl?: string;
+  decisionProvider?: LLMProvider;
+  decisionBaseUrl?: string;
+  explainProvider?: LLMProvider;
+  explainBaseUrl?: string;
   label?: string;
   logDir: string;
   epsilon: number;
@@ -66,6 +80,7 @@ export interface ResolvedStrategyExperimentOptions {
   lateBudget?: number;
   confidenceThreshold?: number;
   revisionCooldown?: number;
+  minRevisionDelta?: number;
   revisionEnabled?: boolean;
   llmRevisionEnabled?: boolean;
   llmRevisionBudget?: number;
@@ -127,6 +142,12 @@ export function resolveStrategyExperimentOptions(
     model: options.model,
     decisionModel: options.decisionModel,
     explainModel: options.explainModel,
+    llmProvider: options.llmProvider,
+    llmBaseUrl: options.llmBaseUrl,
+    decisionProvider: options.decisionProvider,
+    decisionBaseUrl: options.decisionBaseUrl,
+    explainProvider: options.explainProvider,
+    explainBaseUrl: options.explainBaseUrl,
     label: options.label,
     logDir: options.logDir ?? "results/runs",
     epsilon: options.epsilon ?? defaults.epsilon,
@@ -139,6 +160,7 @@ export function resolveStrategyExperimentOptions(
     lateBudget: options.lateBudget,
     confidenceThreshold: options.confidenceThreshold,
     revisionCooldown: options.revisionCooldown,
+    minRevisionDelta: options.minRevisionDelta,
     revisionEnabled: options.revisionEnabled,
     llmRevisionEnabled: options.llmRevisionEnabled,
     llmRevisionBudget: options.llmRevisionBudget,
@@ -163,7 +185,7 @@ function strategyUsesWorldRuntime(strategyName: StrategyName): boolean {
 }
 
 function strategyUsesReflectiveRuntime(strategyName: StrategyName): boolean {
-  return strategyName === "mra" || strategyName === "mra-llm";
+  return strategyName === "mra" || strategyName === "cra" || strategyName === "mra-llm";
 }
 
 export async function runStrategyExperiment(
@@ -174,6 +196,12 @@ export async function runStrategyExperiment(
     model: resolved.model,
     decisionModel: resolved.decisionModel,
     explainModel: resolved.explainModel,
+    llmProvider: resolved.llmProvider,
+    llmBaseUrl: resolved.llmBaseUrl,
+    decisionProvider: resolved.decisionProvider,
+    decisionBaseUrl: resolved.decisionBaseUrl,
+    explainProvider: resolved.explainProvider,
+    explainBaseUrl: resolved.explainBaseUrl,
     candidateQuestions: resolved.candidateQuestions,
     llmCandidates: resolved.llmCandidates,
     gamma: resolved.gamma,
@@ -183,6 +211,7 @@ export async function runStrategyExperiment(
     lateBudget: resolved.lateBudget,
     confidenceThreshold: resolved.confidenceThreshold,
     revisionCooldown: resolved.revisionCooldown,
+    minRevisionDelta: resolved.minRevisionDelta,
     revisionEnabled: resolved.revisionEnabled,
     llmRevisionEnabled: resolved.llmRevisionEnabled,
     llmRevisionBudget: resolved.llmRevisionBudget,
@@ -217,7 +246,11 @@ export async function runStrategyExperiment(
       for (let seed = 0; seed < resolved.seedCount; seed++) {
         const gameSeed = hashSeed(boardId, seed);
         const runtimeBundle = strategyNeedsLineage(resolved.strategyName)
-          ? createBattleshipLineageRuntime(trueBoard, { model: resolved.model })
+          ? createBattleshipLineageRuntime(trueBoard, {
+              provider: resolved.llmProvider,
+              model: resolved.model,
+              baseUrl: resolved.llmBaseUrl,
+            })
           : strategyUsesReflectiveRuntime(resolved.strategyName)
             ? createBattleshipReflectiveRuntime(trueBoard)
           : strategyUsesWorldRuntime(resolved.strategyName)

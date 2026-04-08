@@ -1,17 +1,58 @@
 # Battleship Manifesto
 
-Battleship planning and reflective-agent experiments built on top of the public Manifesto runtime packages.
+Battleship planning and reflective-agent experiments built on the public Manifesto packages.
 
-This repository currently focuses on four agent families:
+This repo is organized as a **Manifesto example app**, not just a Battleship bot. The main progression is:
+
+1. base game law in MEL
+2. revealed world state in MEL
+3. reflective prediction/confidence/revision state in MEL
+
+The public strategy line built on top of that progression is:
 
 - `greedy`: posterior argmax baseline
-- `wma`: world-model planning with revealed state in MEL
-- `mra`: symbolic reflective self-revision without LLM calls
-- `mra-llm`: the same reflective loop with sparse LLM-guided revision
+- `wma`: world-model planning
+- `mra`: symbolic reflective self-revision
+- `cra`: counterfactual preview-gated symbolic revision
+- `mra-llm`: sparse LLM-guided revision on top of the same reflective runtime
 
-## What This Repo Is
+## LLM Providers
 
-This is a paper-like reimplementation of the noisy Collaborative Battleship setup:
+LLM-capable strategies are no longer tied to Ollama. This repo now supports:
+
+- `ollama`
+- `openai`
+
+Defaults:
+
+- provider default: `ollama`
+- Ollama URL default: `OLLAMA_BASE_URL` or `http://localhost:11434`
+- OpenAI URL default: `OPENAI_BASE_URL` or `https://api.openai.com/v1`
+- OpenAI API key: `OPENAI_API_KEY`
+
+This means you can:
+
+- keep using local Ollama
+- point to a remote or Dockerized Ollama instance via `OLLAMA_BASE_URL`
+- switch revision or decision paths to OpenAI via CLI flags
+
+## Start Here
+
+If you want to understand the repo quickly, read in this order:
+
+1. [docs/manifesto-guide.md](./docs/manifesto-guide.md)
+2. [src/domain/battleship.mel](./src/domain/battleship.mel)
+3. [src/domain/battleship-world.mel](./src/domain/battleship-world.mel)
+4. [src/domain/battleship-reflective.mel](./src/domain/battleship-reflective.mel)
+5. [src/domain/wire.ts](./src/domain/wire.ts)
+6. [src/runtime/bridge.ts](./src/runtime/bridge.ts)
+7. [src/runtime/game-loop.ts](./src/runtime/game-loop.ts)
+8. [src/strategies/wma/strategy.ts](./src/strategies/wma/strategy.ts)
+9. [src/strategies/mra/strategy.ts](./src/strategies/mra/strategy.ts)
+
+## Scope Note
+
+This repository uses a **paper-like reimplementation** of noisy Collaborative Battleship:
 
 - `8x8` board
 - `14` total ship cells
@@ -19,31 +60,38 @@ This is a paper-like reimplementation of the noisy Collaborative Battleship setu
 - up to `15` questions
 - noisy answers with `epsilon = 0.1`
 
-Important scope note:
+Important:
 
 - this repo does **not** currently claim exact benchmark reproduction of Grand et al.
 - the public experiment suite uses a deterministic synthetic `18`-board set
-- the current paper tables are primarily reported with `MCMC 500`
+- current public examples commonly use `MCMC 500`
 
-So the right reading is: this repo is a protocol and systems study in a controlled reimplementation setting.
+## Prerequisites
 
-## Requirements
+You need a recent Node.js runtime. This repo is currently tested with Node.js `25.9.0`.
 
-- Node.js `25+`
-- `pnpm`
+If you do not have Node.js yet:
+
+- install it from [nodejs.org](https://nodejs.org/)
+- or use `nvm` and run `nvm use` in this repo after reading [`.nvmrc`](./.nvmrc)
+
+You do **not** need to install `pnpm` globally. The easiest path is to use Node's bundled `corepack`.
 
 ## Quickstart
 
-Install dependencies:
+Enable `pnpm`, install dependencies, and typecheck:
 
 ```bash
+corepack enable
 pnpm install
+pnpm check
 ```
 
-Typecheck the project:
+If `corepack` is unavailable, you can also run:
 
 ```bash
-pnpm check
+npx pnpm@10.33.0 install
+npx pnpm@10.33.0 check
 ```
 
 Run a one-board smoke test:
@@ -52,31 +100,58 @@ Run a one-board smoke test:
 pnpm run exp:run -- --strategy mra --revision-enabled true --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label smoke-mra-b17
 ```
 
-Inspect the run with the log lens:
+Inspect the result:
 
 ```bash
 pnpm run log:lens -- --view run --run latest
 pnpm run log:lens -- --view confidence --run latest --game B17-seed0
 ```
 
-## Main Entry Points
+## Common Runs
 
-Official experiment runner:
-
-```bash
-pnpm run exp:run -- --strategy <strategy> --protocol paper
-```
-
-Useful examples:
+Greedy baseline:
 
 ```bash
-pnpm run exp:run -- --strategy greedy --protocol paper --belief mcmc --particles 500
-pnpm run exp:run -- --strategy wma --protocol paper --belief mcmc --particles 500
-pnpm run exp:run -- --strategy mra --protocol paper --belief mcmc --particles 500 --revision-enabled true
-pnpm run exp:run -- --strategy mra-llm --protocol paper --belief mcmc --particles 500 --decision-model gemma4:e4b --model gemma4:e4b --confidence-threshold 1.0
+pnpm run exp:run -- --strategy greedy --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label greedy-all3
 ```
 
-Frontend/demo build:
+World-model planner:
+
+```bash
+pnpm run exp:run -- --strategy wma --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label wma-all3
+```
+
+Reflective symbolic agent:
+
+```bash
+pnpm run exp:run -- --strategy mra --revision-enabled true --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label mra-all3
+```
+
+Counterfactual reflective baseline:
+
+```bash
+pnpm run exp:run -- --strategy cra --revision-enabled true --min-revision-delta 0.01 --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label cra-all3
+```
+
+Reflective agent with sparse LLM revision:
+
+```bash
+pnpm run exp:run -- --strategy mra-llm --decision-model gemma4:e4b --model gemma4:e4b --confidence-threshold 1.0 --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label mra-llm-all3
+```
+
+Reflective agent with OpenAI-backed revision:
+
+```bash
+OPENAI_API_KEY=... pnpm run exp:run -- --strategy mra-llm --llm-provider openai --decision-provider openai --decision-model gpt-4o-mini --confidence-threshold 1.0 --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label mra-openai-b17
+```
+
+World-model agent against a remote or Dockerized Ollama:
+
+```bash
+OLLAMA_BASE_URL=http://host.docker.internal:11434 pnpm run exp:run -- --strategy wma-llm-salvage --decision-model gemma4:e4b --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label wma-remote-ollama-b17
+```
+
+Build the demo app:
 
 ```bash
 pnpm build
@@ -84,18 +159,24 @@ pnpm build
 
 ## Log Analysis
 
-Use the lens first. This repo treats `scripts/log-lens.ts` as the analysis surface.
+Use the lens first.
 
-Run-level summary:
+Run summary:
 
 ```bash
 pnpm run log:lens -- --view run --run <run-id-or-path>
 ```
 
-Single-game inspection:
+Single game:
 
 ```bash
 pnpm run log:lens -- --view game --run <run-id-or-path> --game <board-seed>
+```
+
+Reflective confidence trace:
+
+```bash
+pnpm run log:lens -- --view confidence --run <run-id-or-path> --game <board-seed>
 ```
 
 LLM usage:
@@ -110,40 +191,45 @@ Primary vs baseline comparison:
 pnpm run log:lens -- --view compare --run <primary-run> --compare-run <baseline-run>
 ```
 
-For reflective agents:
+Per repository policy in [AGENTS.md](./AGENTS.md), raw run logs should not be the default analysis path.
 
-```bash
-pnpm run log:lens -- --view confidence --run <run-id-or-path> --game <board-seed>
-```
+## Manifesto Structure In This Repo
 
-By repository policy in [AGENTS.md](./AGENTS.md), raw run logs should not be the default analysis path.
+### Domain progression
 
-## Strategies
+- [src/domain/battleship.mel](./src/domain/battleship.mel)
+  - base game law
+- [src/domain/battleship-world.mel](./src/domain/battleship-world.mel)
+  - revealed board state in MEL
+- [src/domain/battleship-reflective.mel](./src/domain/battleship-reflective.mel)
+  - prediction, confidence, and revision state in MEL
 
-### `greedy`
+### Runtime seam
 
-Chooses the highest posterior hit-probability shot. This is the cleanest `MCMC posterior argmax` baseline.
+- [src/domain/wire.ts](./src/domain/wire.ts)
+  - chooses which domain to activate
+- [src/runtime](./src/runtime)
+  - bridge, simulation, and game loop
 
-### `wma`
+### Supporting systems
 
-Moves revealed board state into MEL and uses `sim.next()`-style planning over that declared world model.
+- [src/belief](./src/belief)
+  - particle/MCMC belief tracking
+- [src/questions](./src/questions)
+  - template questions and question DSL
+- [src/strategies](./src/strategies)
+  - current public strategy implementations
+- [src/legacy](./src/legacy)
+  - older prompt/parsing paths kept out of the main story
 
-### `mra`
+## Docs
 
-Adds a symbolic reflective loop:
+- [docs/manifesto-guide.md](./docs/manifesto-guide.md)
+- [docs/architecture.md](./docs/architecture.md)
+- [docs/how-to-run.md](./docs/how-to-run.md)
+- [docs/how-to-analyze.md](./docs/how-to-analyze.md)
 
-- record a prediction
-- observe the actual outcome
-- update confidence
-- revise policy when confidence stays low
-
-This path does not need LLM calls.
-
-### `mra-llm`
-
-Keeps the same reflective runtime, but lets the LLM participate only in low-confidence revision steps. This is the main path for measuring how much LLM a self-revising agent actually needs.
-
-## Manifesto Packages
+## Packages
 
 This repo uses the published Manifesto packages from npm, not a local linked core:
 
@@ -153,23 +239,15 @@ This repo uses the published Manifesto packages from npm, not a local linked cor
 - `@manifesto-ai/codegen`
 - `@manifesto-ai/skills`
 
-## Repository Layout
-
-- [src/agent](./src/agent): strategies, pipelines, question DSL, LLM integration
-- [src/domain](./src/domain): MEL domains and runtime wiring
-- [scripts](./scripts): experiment runner, log lens, and export utilities
-- [docs](./docs): public analysis notes and reports
-- [packages/codify-agent](./packages/codify-agent): patch-first codify package for future cross-episode revision work
-
 ## Current Status
 
-What is solid right now:
+Solid now:
 
 - published Manifesto packages are wired in
-- `wma`, `mra`, and `mra-llm` all run from the same public CLI
-- log-lens covers run, game, llm, compare, and confidence views
+- `wma`, `mra`, `cra`, and `mra-llm` all run from the same public CLI
+- `log:lens` covers run, game, llm, compare, and confidence views
 
-What is still intentionally open:
+Still intentionally open:
 
 - exact published-board benchmark matching
 - larger-seed confirmation runs

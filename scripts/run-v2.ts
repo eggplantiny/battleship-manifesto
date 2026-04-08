@@ -1,7 +1,7 @@
 /**
  * Official experiment runner.
  *
- * Defaults to the paper-matched CaptainQA protocol:
+ * Defaults to the public paper-like Battleship protocol:
  * - all boards
  * - 3 seeds
  * - 500 particles
@@ -9,8 +9,9 @@
  * - epsilon 0.1
  */
 import { parseArgs } from "node:util";
-import type { BeliefKind } from "../src/agent/belief-state.js";
-import type { StrategyName } from "../src/agent/strategies/create-strategy.js";
+import type { BeliefKind } from "../src/belief/belief-state.js";
+import type { LLMProvider } from "../src/llm/client.js";
+import type { StrategyName } from "../src/strategies/create-strategy.js";
 import {
   resolveStrategyExperimentOptions,
   runStrategyExperiment,
@@ -36,12 +37,19 @@ const { values: args } = parseArgs({
     "late-budget": { type: "string" },
     "confidence-threshold": { type: "string" },
     "revision-cooldown": { type: "string" },
+    "min-revision-delta": { type: "string" },
     "revision-enabled": { type: "string" },
     "llm-revision-enabled": { type: "string" },
     "llm-revision-budget": { type: "string" },
     model: { type: "string", default: "gemma4:e4b" },
     "decision-model": { type: "string" },
     "explain-model": { type: "string" },
+    "llm-provider": { type: "string" },
+    "llm-base-url": { type: "string" },
+    "decision-provider": { type: "string" },
+    "decision-base-url": { type: "string" },
+    "explain-provider": { type: "string" },
+    "explain-base-url": { type: "string" },
     label: { type: "string" },
     "log-dir": { type: "string", default: "results/runs" },
   },
@@ -63,12 +71,19 @@ async function main(): Promise<void> {
     lateBudget: parseOptionalInt(args["late-budget"]),
     confidenceThreshold: parseOptionalFloat(args["confidence-threshold"]),
     revisionCooldown: parseOptionalInt(args["revision-cooldown"]),
+    minRevisionDelta: parseOptionalFloat(args["min-revision-delta"]),
     revisionEnabled: parseOptionalBoolean(args["revision-enabled"]),
     llmRevisionEnabled: parseOptionalBoolean(args["llm-revision-enabled"]),
     llmRevisionBudget: parseOptionalInt(args["llm-revision-budget"]),
     model: args.model!,
     decisionModel: args["decision-model"],
     explainModel: args["explain-model"],
+    llmProvider: args["llm-provider"] as LLMProvider | undefined,
+    llmBaseUrl: args["llm-base-url"],
+    decisionProvider: args["decision-provider"] as LLMProvider | undefined,
+    decisionBaseUrl: args["decision-base-url"],
+    explainProvider: args["explain-provider"] as LLMProvider | undefined,
+    explainBaseUrl: args["explain-base-url"],
     label: args.label,
     logDir: args["log-dir"]!,
     onGameComplete: ({ boardId, seedIndex, result: game }) => {

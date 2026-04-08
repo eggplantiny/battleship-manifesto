@@ -785,15 +785,25 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       predictionErrorEMA: null,
       calibrationErrorEMA: null,
       lowConfidenceStreak: null,
+      recentHighProbMissStreak: null,
+      recentQuestionFailureStreak: null,
+      exploitLockStreak: null,
       modelConfidence: null,
       needRevision: null,
       sustainedLowConfidence: null,
+      allowLooseCoarseRevision: null,
       policyMode: null,
       revisionReason: null,
+      lastRevisionDelta: null,
       currentPolicyPreviewValue: null,
       coarseCollapsePreviewValue: null,
       lateDiffusePreviewValue: null,
       clusterCloseoutPreviewValue: null,
+      reopenLocalProbePreviewValue: null,
+      confidenceCollapseReprobePreviewValue: null,
+      reopenLocalProbeDelta: null,
+      confidenceCollapseReprobeDelta: null,
+      bestRevisionKind: null,
       bestRevisionDelta: null,
       positiveRevisionPreview: null,
       coarseBudget: null,
@@ -817,14 +827,23 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       row.predictionErrorEMA = asNullableNumber(readNested(event.snapshot, ["predictionErrorEMA"])) ?? row.predictionErrorEMA;
       row.calibrationErrorEMA = asNullableNumber(readNested(event.snapshot, ["calibrationErrorEMA"])) ?? row.calibrationErrorEMA;
       row.lowConfidenceStreak = asNullableNumber(readNested(event.snapshot, ["lowConfidenceStreak"])) ?? row.lowConfidenceStreak;
+      row.recentHighProbMissStreak = asNullableNumber(readNested(event.snapshot, ["recentHighProbMissStreak"])) ?? row.recentHighProbMissStreak;
+      row.recentQuestionFailureStreak = asNullableNumber(readNested(event.snapshot, ["recentQuestionFailureStreak"])) ?? row.recentQuestionFailureStreak;
+      row.exploitLockStreak = asNullableNumber(readNested(event.snapshot, ["exploitLockStreak"])) ?? row.exploitLockStreak;
       row.modelConfidence = asNullableNumber(readNested(event.snapshot, ["modelConfidence"])) ?? row.modelConfidence;
       row.needRevision = asBoolean(readNested(event.snapshot, ["needRevision"])) ?? row.needRevision;
       row.sustainedLowConfidence = asBoolean(readNested(event.snapshot, ["sustainedLowConfidence"])) ?? row.sustainedLowConfidence;
+      row.allowLooseCoarseRevision = asBoolean(readNested(event.snapshot, ["allowLooseCoarseRevision"])) ?? row.allowLooseCoarseRevision;
       row.policyMode = asString(readNested(event.snapshot, ["policyMode"])) ?? row.policyMode;
       row.currentPolicyPreviewValue = asNullableNumber(readNested(event.snapshot, ["currentPolicyPreviewValue"])) ?? row.currentPolicyPreviewValue;
       row.coarseCollapsePreviewValue = asNullableNumber(readNested(event.snapshot, ["coarseCollapsePreviewValue"])) ?? row.coarseCollapsePreviewValue;
       row.lateDiffusePreviewValue = asNullableNumber(readNested(event.snapshot, ["lateDiffusePreviewValue"])) ?? row.lateDiffusePreviewValue;
       row.clusterCloseoutPreviewValue = asNullableNumber(readNested(event.snapshot, ["clusterCloseoutPreviewValue"])) ?? row.clusterCloseoutPreviewValue;
+      row.reopenLocalProbePreviewValue = asNullableNumber(readNested(event.snapshot, ["reopenLocalProbePreviewValue"])) ?? row.reopenLocalProbePreviewValue;
+      row.confidenceCollapseReprobePreviewValue = asNullableNumber(readNested(event.snapshot, ["confidenceCollapseReprobePreviewValue"])) ?? row.confidenceCollapseReprobePreviewValue;
+      row.reopenLocalProbeDelta = asNullableNumber(readNested(event.snapshot, ["reopenLocalProbeDelta"])) ?? row.reopenLocalProbeDelta;
+      row.confidenceCollapseReprobeDelta = asNullableNumber(readNested(event.snapshot, ["confidenceCollapseReprobeDelta"])) ?? row.confidenceCollapseReprobeDelta;
+      row.bestRevisionKind = asString(readNested(event.snapshot, ["bestRevisionKind"])) ?? row.bestRevisionKind;
       row.bestRevisionDelta = asNullableNumber(readNested(event.snapshot, ["bestRevisionDelta"])) ?? row.bestRevisionDelta;
       row.positiveRevisionPreview = asBoolean(readNested(event.snapshot, ["positiveRevisionPreview"])) ?? row.positiveRevisionPreview;
       row.coarseBudget = asNullableNumber(readNested(event.snapshot, ["coarseBudget"])) ?? row.coarseBudget;
@@ -860,7 +879,10 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       row.appliedRevisionSource = asString(event.data.source) ?? null;
       row.llmRevisionUsed = asBoolean(event.data.usedLLM) ?? null;
       row.llmRevisionFallback = asBoolean(event.data.llmFallback) ?? null;
+      row.bestRevisionKind = asString(event.data.bestRevisionKind) ?? row.bestRevisionKind;
+      row.bestRevisionDelta = asNullableNumber(event.data.bestRevisionDelta) ?? row.bestRevisionDelta;
       row.policyMode = asString(event.data.policyMode) ?? row.policyMode;
+      row.lastRevisionDelta = asNullableNumber(event.data.lastRevisionDelta) ?? row.lastRevisionDelta;
       row.coarseBudget = asNullableNumber(event.data.coarseBudget) ?? row.coarseBudget;
       row.localBudget = asNullableNumber(event.data.localBudget) ?? row.localBudget;
       row.lateBudget = asNullableNumber(event.data.lateBudget) ?? row.lateBudget;
@@ -967,15 +989,25 @@ function renderTurnRow(turn: TurnLens): Record<string, unknown> {
     predictionErrorEMA: turn.snapshot ? asNumber(readNested(turn.snapshot, ["predictionErrorEMA"])) : null,
     calibrationErrorEMA: turn.snapshot ? asNumber(readNested(turn.snapshot, ["calibrationErrorEMA"])) : null,
     lowConfidenceStreak: turn.snapshot ? asNumber(readNested(turn.snapshot, ["lowConfidenceStreak"])) : null,
+    recentHighProbMissStreak: turn.snapshot ? asNumber(readNested(turn.snapshot, ["recentHighProbMissStreak"])) : null,
+    recentQuestionFailureStreak: turn.snapshot ? asNumber(readNested(turn.snapshot, ["recentQuestionFailureStreak"])) : null,
+    exploitLockStreak: turn.snapshot ? asNumber(readNested(turn.snapshot, ["exploitLockStreak"])) : null,
     modelConfidence: turn.snapshot ? asNumber(readNested(turn.snapshot, ["modelConfidence"])) : null,
     needRevision: turn.snapshot ? asBoolean(readNested(turn.snapshot, ["needRevision"])) : null,
     sustainedLowConfidence: turn.snapshot ? asBoolean(readNested(turn.snapshot, ["sustainedLowConfidence"])) : null,
+    allowLooseCoarseRevision: turn.snapshot ? asBoolean(readNested(turn.snapshot, ["allowLooseCoarseRevision"])) : null,
     policyMode: turn.snapshot ? asString(readNested(turn.snapshot, ["policyMode"])) : null,
     lastRevisionReason: turn.snapshot ? asString(readNested(turn.snapshot, ["lastRevisionReason"])) : null,
+    lastRevisionDelta: turn.snapshot ? asNumber(readNested(turn.snapshot, ["lastRevisionDelta"])) : null,
     currentPolicyPreviewValue: turn.snapshot ? asNumber(readNested(turn.snapshot, ["currentPolicyPreviewValue"])) : null,
     coarseCollapsePreviewValue: turn.snapshot ? asNumber(readNested(turn.snapshot, ["coarseCollapsePreviewValue"])) : null,
     lateDiffusePreviewValue: turn.snapshot ? asNumber(readNested(turn.snapshot, ["lateDiffusePreviewValue"])) : null,
     clusterCloseoutPreviewValue: turn.snapshot ? asNumber(readNested(turn.snapshot, ["clusterCloseoutPreviewValue"])) : null,
+    reopenLocalProbePreviewValue: turn.snapshot ? asNumber(readNested(turn.snapshot, ["reopenLocalProbePreviewValue"])) : null,
+    confidenceCollapseReprobePreviewValue: turn.snapshot ? asNumber(readNested(turn.snapshot, ["confidenceCollapseReprobePreviewValue"])) : null,
+    reopenLocalProbeDelta: turn.snapshot ? asNumber(readNested(turn.snapshot, ["reopenLocalProbeDelta"])) : null,
+    confidenceCollapseReprobeDelta: turn.snapshot ? asNumber(readNested(turn.snapshot, ["confidenceCollapseReprobeDelta"])) : null,
+    bestRevisionKind: turn.snapshot ? asString(readNested(turn.snapshot, ["bestRevisionKind"])) : null,
     bestRevisionDelta: turn.snapshot ? asNumber(readNested(turn.snapshot, ["bestRevisionDelta"])) : null,
     positiveRevisionPreview: turn.snapshot ? asBoolean(readNested(turn.snapshot, ["positiveRevisionPreview"])) : null,
     coarseBudget: turn.snapshot ? asNumber(readNested(turn.snapshot, ["coarseBudget"])) : null,

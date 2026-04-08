@@ -112,12 +112,16 @@ export interface SnapshotSummary {
   predictionErrorEMA?: number;
   calibrationErrorEMA?: number;
   lowConfidenceStreak?: number;
+  recentHighProbMissStreak?: number;
+  recentQuestionFailureStreak?: number;
+  exploitLockStreak?: number;
   modelConfidence?: number;
   needRevision?: boolean;
   canRevisePolicy?: boolean;
   shouldRevisePolicy?: boolean;
   confidenceThreshold?: number;
   minRevisionDelta?: number;
+  allowLooseCoarseRevision?: boolean;
   revisionCooldownTurns?: number;
   revisionCooldownRemaining?: number;
   revisionEnabled?: boolean;
@@ -130,6 +134,7 @@ export interface SnapshotSummary {
   policyMode?: string;
   lastRevisionReason?: string;
   lastRevisionSource?: string;
+  lastRevisionDelta?: number;
   lastLLMRevisionFallback?: boolean;
   coarseBudget?: number;
   localBudget?: number;
@@ -153,10 +158,15 @@ export interface SnapshotSummary {
   coarseCollapsePreviewValue?: number;
   lateDiffusePreviewValue?: number;
   clusterCloseoutPreviewValue?: number;
+  reopenLocalProbePreviewValue?: number;
+  confidenceCollapseReprobePreviewValue?: number;
   sustainedLowConfidence?: boolean;
   coarseCollapseDelta?: number;
   lateDiffuseDelta?: number;
   clusterCloseoutDelta?: number;
+  reopenLocalProbeDelta?: number;
+  confidenceCollapseReprobeDelta?: number;
+  bestRevisionKind?: string;
   bestRevisionDelta?: number;
   positiveRevisionPreview?: boolean;
   nextRevisionKind?: string;
@@ -373,12 +383,16 @@ export function summarizeSnapshot(
     predictionErrorEMA: readNumber(data.predictionErrorEMA),
     calibrationErrorEMA: readNumber(data.calibrationErrorEMA),
     lowConfidenceStreak: readNumber(data.lowConfidenceStreak),
+    recentHighProbMissStreak: readNumber(data.recentHighProbMissStreak),
+    recentQuestionFailureStreak: readNumber(data.recentQuestionFailureStreak),
+    exploitLockStreak: readNumber(data.exploitLockStreak),
     modelConfidence: readNumber(computed.modelConfidence),
     needRevision: readBoolean(computed.needRevision),
     canRevisePolicy: readBoolean(computed.canRevisePolicy),
     shouldRevisePolicy: readBoolean(computed.shouldRevisePolicy),
     confidenceThreshold: readNumber(data.confidenceThreshold),
     minRevisionDelta: readNumber(data.minRevisionDelta),
+    allowLooseCoarseRevision: readBoolean(data.allowLooseCoarseRevision),
     revisionCooldownTurns: readNumber(data.revisionCooldownTurns),
     revisionCooldownRemaining: readNumber(data.revisionCooldownRemaining),
     revisionEnabled: readBoolean(data.revisionEnabled),
@@ -391,6 +405,7 @@ export function summarizeSnapshot(
     policyMode: readString(data.policyMode),
     lastRevisionReason: readString(data.lastRevisionReason),
     lastRevisionSource: readString(data.lastRevisionSource),
+    lastRevisionDelta: readNumber(data.lastRevisionDelta),
     lastLLMRevisionFallback: readBoolean(data.lastLLMRevisionFallback),
     coarseBudget: readNumber(data.coarseBudget),
     localBudget: readNumber(data.localBudget),
@@ -414,10 +429,15 @@ export function summarizeSnapshot(
     coarseCollapsePreviewValue: readNumber(data.coarseCollapsePreviewValue),
     lateDiffusePreviewValue: readNumber(data.lateDiffusePreviewValue),
     clusterCloseoutPreviewValue: readNumber(data.clusterCloseoutPreviewValue),
+    reopenLocalProbePreviewValue: readNumber(data.reopenLocalProbePreviewValue),
+    confidenceCollapseReprobePreviewValue: readNumber(data.confidenceCollapseReprobePreviewValue),
     sustainedLowConfidence: readBoolean(computed.sustainedLowConfidence),
     coarseCollapseDelta: readNumber(computed.coarseCollapseDelta),
     lateDiffuseDelta: readNumber(computed.lateDiffuseDelta),
     clusterCloseoutDelta: readNumber(computed.clusterCloseoutDelta),
+    reopenLocalProbeDelta: readNumber(computed.reopenLocalProbeDelta),
+    confidenceCollapseReprobeDelta: readNumber(computed.confidenceCollapseReprobeDelta),
+    bestRevisionKind: readString(computed.bestRevisionKind),
     bestRevisionDelta: readNumber(computed.bestRevisionDelta),
     positiveRevisionPreview: readBoolean(computed.positiveRevisionPreview),
     nextRevisionKind: readString(computed.nextRevisionKind),

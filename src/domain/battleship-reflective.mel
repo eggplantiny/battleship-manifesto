@@ -32,6 +32,8 @@ domain BattleshipReflective {
     coarseCollapsePreviewValue: number = 0
     lateDiffusePreviewValue: number = 0
     clusterCloseoutPreviewValue: number = 0
+    reopenLocalProbePreviewValue: number = 0
+    confidenceCollapseReprobePreviewValue: number = 0
     coarseQuestionsUsed: number = 0
     localQuestionsUsed: number = 0
     lateQuestionsUsed: number = 0
@@ -46,8 +48,12 @@ domain BattleshipReflective {
     predictionErrorEMA: number = 0
     calibrationErrorEMA: number = 0
     lowConfidenceStreak: number = 0
+    recentHighProbMissStreak: number = 0
+    recentQuestionFailureStreak: number = 0
+    exploitLockStreak: number = 0
     confidenceThreshold: number = 0.72
     minRevisionDelta: number = 0.01
+    allowLooseCoarseRevision: boolean = true
     revisionCooldownTurns: number = 3
     revisionCooldownRemaining: number = 0
     revisionEnabled: boolean = true
@@ -58,6 +64,7 @@ domain BattleshipReflective {
     policyMode: string = "default"
     lastRevisionReason: string = ""
     lastRevisionSource: string = ""
+    lastRevisionDelta: number = 0
     lastLLMRevisionFallback: boolean = false
     coarseBudget: number = 6
     localBudget: number = 2
@@ -139,81 +146,176 @@ domain BattleshipReflective {
   computed coarseCollapseDelta = sub(coarseCollapsePreviewValue, currentPolicyPreviewValue)
   computed lateDiffuseDelta = sub(lateDiffusePreviewValue, currentPolicyPreviewValue)
   computed clusterCloseoutDelta = sub(clusterCloseoutPreviewValue, currentPolicyPreviewValue)
-  computed coarseCollapseCandidate = and(coarseRoiCollapsed, gte(coarseCollapseDelta, sub(0, minRevisionDelta)))
+  computed reopenLocalProbeDelta = sub(reopenLocalProbePreviewValue, currentPolicyPreviewValue)
+  computed confidenceCollapseReprobeDelta = sub(confidenceCollapseReprobePreviewValue, currentPolicyPreviewValue)
+  computed totalQuestionBudget = add(add(coarseBudget, localBudget), lateBudget)
+  computed coarseCollapseCandidate = and(
+    coarseRoiCollapsed,
+    cond(
+      allowLooseCoarseRevision,
+      gte(coarseCollapseDelta, sub(0, minRevisionDelta)),
+      gte(coarseCollapseDelta, 0)
+    )
+  )
   computed lateDiffuseCandidate = and(lateDiffuseReprobeEligible, gt(lateDiffuseDelta, minRevisionDelta))
   computed clusterCloseoutCandidate = and(clusterCloseoutBiasEligible, gt(clusterCloseoutDelta, minRevisionDelta))
-  computed nextRevisionKind = cond(
+  computed reopenLocalProbeCandidate = and(
+    eq(questionFamilyMode, "local"),
+    and(
+      and(not(questionBudgetOpen), or(gte(exploitLockStreak, 2), gte(recentQuestionFailureStreak, 2))),
+      and(lte(totalQuestionBudget, 14), gt(reopenLocalProbeDelta, minRevisionDelta))
+    )
+  )
+  computed confidenceCollapseReprobeCandidate = and(
+    and(gte(recentHighProbMissStreak, 2), gte(exploitLockStreak, 2)),
+    and(lte(totalQuestionBudget, 13), gt(confidenceCollapseReprobeDelta, minRevisionDelta))
+  )
+  computed bestRevisionKind = cond(
     and(
       coarseCollapseCandidate,
       and(
-        or(not(lateDiffuseCandidate), gte(coarseCollapseDelta, lateDiffuseDelta)),
-        or(not(clusterCloseoutCandidate), gte(coarseCollapseDelta, clusterCloseoutDelta))
+        and(
+          or(not(lateDiffuseCandidate), gte(coarseCollapseDelta, lateDiffuseDelta)),
+          or(not(clusterCloseoutCandidate), gte(coarseCollapseDelta, clusterCloseoutDelta))
+        ),
+        and(
+          or(not(reopenLocalProbeCandidate), gte(coarseCollapseDelta, reopenLocalProbeDelta)),
+          or(not(confidenceCollapseReprobeCandidate), gte(coarseCollapseDelta, confidenceCollapseReprobeDelta))
+        )
       )
     ),
     "coarse_roi_collapse",
     cond(
       and(
         lateDiffuseCandidate,
-        or(not(clusterCloseoutCandidate), gte(lateDiffuseDelta, clusterCloseoutDelta))
+        and(
+          or(not(clusterCloseoutCandidate), gte(lateDiffuseDelta, clusterCloseoutDelta)),
+          and(
+            or(not(reopenLocalProbeCandidate), gte(lateDiffuseDelta, reopenLocalProbeDelta)),
+            or(not(confidenceCollapseReprobeCandidate), gte(lateDiffuseDelta, confidenceCollapseReprobeDelta))
+          )
+        )
       ),
       "late_diffuse_reprobe",
-      cond(clusterCloseoutCandidate, "cluster_closeout_bias", "")
+      cond(
+        and(
+          clusterCloseoutCandidate,
+          and(
+            or(not(reopenLocalProbeCandidate), gte(clusterCloseoutDelta, reopenLocalProbeDelta)),
+            or(not(confidenceCollapseReprobeCandidate), gte(clusterCloseoutDelta, confidenceCollapseReprobeDelta))
+          )
+        ),
+        "cluster_closeout_bias",
+        cond(
+          and(
+            reopenLocalProbeCandidate,
+            or(not(confidenceCollapseReprobeCandidate), gte(reopenLocalProbeDelta, confidenceCollapseReprobeDelta))
+          ),
+          "reopen_local_probe",
+          cond(confidenceCollapseReprobeCandidate, "confidence_collapse_reprobe", "")
+        )
+      )
     )
   )
   computed bestRevisionDelta = cond(
-    eq(nextRevisionKind, "coarse_roi_collapse"),
+    eq(bestRevisionKind, "coarse_roi_collapse"),
     coarseCollapseDelta,
     cond(
-      eq(nextRevisionKind, "late_diffuse_reprobe"),
+      eq(bestRevisionKind, "late_diffuse_reprobe"),
       lateDiffuseDelta,
-      cond(eq(nextRevisionKind, "cluster_closeout_bias"), clusterCloseoutDelta, 0)
+      cond(
+        eq(bestRevisionKind, "cluster_closeout_bias"),
+        clusterCloseoutDelta,
+        cond(
+          eq(bestRevisionKind, "reopen_local_probe"),
+          reopenLocalProbeDelta,
+          cond(
+            eq(bestRevisionKind, "confidence_collapse_reprobe"),
+            confidenceCollapseReprobeDelta,
+            0
+          )
+        )
+      )
     )
   )
   computed positiveRevisionPreview = or(
     gt(bestRevisionDelta, minRevisionDelta),
-    and(eq(nextRevisionKind, "coarse_roi_collapse"), coarseCollapseCandidate)
+    and(eq(bestRevisionKind, "coarse_roi_collapse"), coarseCollapseCandidate)
   )
+  computed nextRevisionKind = bestRevisionKind
   computed nextPolicyMode = cond(
-    eq(nextRevisionKind, "coarse_roi_collapse"),
+    eq(bestRevisionKind, "coarse_roi_collapse"),
     "coarse-reduced",
     cond(
-      eq(nextRevisionKind, "late_diffuse_reprobe"),
+      eq(bestRevisionKind, "late_diffuse_reprobe"),
       "late-reprobe",
-      cond(eq(nextRevisionKind, "cluster_closeout_bias"), "closeout", policyMode)
+      cond(
+        eq(bestRevisionKind, "cluster_closeout_bias"),
+        "closeout",
+        cond(
+          eq(bestRevisionKind, "reopen_local_probe"),
+          "local-reprobe",
+          cond(eq(bestRevisionKind, "confidence_collapse_reprobe"), "collapse-reprobe", policyMode)
+        )
+      )
     )
   )
   computed nextCoarseBudget = cond(
-    eq(nextRevisionKind, "coarse_roi_collapse"),
+    eq(bestRevisionKind, "coarse_roi_collapse"),
     sub(coarseBudget, 1),
     coarseBudget
   )
   computed nextLocalBudget = cond(
-    eq(nextRevisionKind, "coarse_roi_collapse"),
+    eq(bestRevisionKind, "coarse_roi_collapse"),
     add(localBudget, 1),
     cond(
-      eq(nextRevisionKind, "late_diffuse_reprobe"),
+      eq(bestRevisionKind, "late_diffuse_reprobe"),
       cond(gt(localBudget, 0), sub(localBudget, 1), 0),
-      localBudget
+      cond(
+        eq(bestRevisionKind, "reopen_local_probe"),
+        add(localBudget, 1),
+        cond(
+          eq(bestRevisionKind, "confidence_collapse_reprobe"),
+          add(localBudget, 1),
+          localBudget
+        )
+      )
     )
   )
   computed nextLateBudget = cond(
-    eq(nextRevisionKind, "late_diffuse_reprobe"),
+    eq(bestRevisionKind, "late_diffuse_reprobe"),
     add(lateBudget, 1),
-    lateBudget
+    cond(
+      eq(bestRevisionKind, "confidence_collapse_reprobe"),
+      add(lateBudget, 1),
+      lateBudget
+    )
   )
   computed nextSalvageStartTurn = cond(
-    eq(nextRevisionKind, "late_diffuse_reprobe"),
+    eq(bestRevisionKind, "late_diffuse_reprobe"),
     cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
     cond(
-      eq(nextRevisionKind, "cluster_closeout_bias"),
+      eq(bestRevisionKind, "cluster_closeout_bias"),
       cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
-      salvageStartTurn
+      cond(
+        eq(bestRevisionKind, "confidence_collapse_reprobe"),
+        cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
+        salvageStartTurn
+      )
     )
   )
   computed nextExploitThreshold = cond(
-    eq(nextRevisionKind, "cluster_closeout_bias"),
+    eq(bestRevisionKind, "cluster_closeout_bias"),
     cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.05), 0.4),
-    exploitThreshold
+    cond(
+      eq(bestRevisionKind, "reopen_local_probe"),
+      cond(gt(exploitThreshold, 0.5), sub(exploitThreshold, 0.05), 0.45),
+      cond(
+        eq(bestRevisionKind, "confidence_collapse_reprobe"),
+        cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.05), 0.4),
+        exploitThreshold
+      )
+    )
   )
   computed revisionRequested = and(
     canRevisePolicy,
@@ -264,6 +366,19 @@ domain BattleshipReflective {
       patch revisionEnabled = nextRevisionEnabled
       patch llmRevisionEnabled = nextLLMRevisionEnabled
       patch llmRevisionBudget = nextLLMRevisionBudget
+    }
+  }
+
+  action configureCounterfactualRevision(
+    nextMinRevisionDelta: number,
+    nextAllowLooseCoarseRevision: boolean
+  ) available when eq(phase, "playing") {
+    when lt(nextMinRevisionDelta, 0) {
+      fail "INVALID_MIN_REVISION_DELTA"
+    }
+    onceIntent {
+      patch minRevisionDelta = nextMinRevisionDelta
+      patch allowLooseCoarseRevision = nextAllowLooseCoarseRevision
     }
   }
 
@@ -368,13 +483,17 @@ domain BattleshipReflective {
     previewCurrentPolicyValue: number,
     previewCoarseCollapseValue: number,
     previewLateDiffuseValue: number,
-    previewClusterCloseoutValue: number
+    previewClusterCloseoutValue: number,
+    previewReopenLocalProbeValue: number,
+    previewConfidenceCollapseReprobeValue: number
   ) available when eq(phase, "playing") {
     onceIntent {
       patch currentPolicyPreviewValue = previewCurrentPolicyValue
       patch coarseCollapsePreviewValue = previewCoarseCollapseValue
       patch lateDiffusePreviewValue = previewLateDiffuseValue
       patch clusterCloseoutPreviewValue = previewClusterCloseoutValue
+      patch reopenLocalProbePreviewValue = previewReopenLocalProbeValue
+      patch confidenceCollapseReprobePreviewValue = previewConfidenceCollapseReprobeValue
     }
   }
 
@@ -455,6 +574,24 @@ domain BattleshipReflective {
         )
       )
       patch observedTurnCount = add(observedTurnCount, 1)
+      patch recentHighProbMissStreak = cond(
+        and(
+          eq(predictedActionKind, "shoot"),
+          and(gte(predictedHitProb, exploitThreshold), eq(observedSignal, 0))
+        ),
+        add(recentHighProbMissStreak, 1),
+        0
+      )
+      patch recentQuestionFailureStreak = cond(
+        and(eq(predictedActionKind, "question"), gt(predictedGain, realizedGain)),
+        add(recentQuestionFailureStreak, 1),
+        0
+      )
+      patch exploitLockStreak = cond(
+        and(eq(predictedActionKind, "shoot"), gte(predictedHitProb, exploitThreshold)),
+        add(exploitLockStreak, 1),
+        0
+      )
       patch revisionCooldownRemaining = cond(
         gt(revisionCooldownRemaining, 0),
         sub(revisionCooldownRemaining, 1),
@@ -484,8 +621,9 @@ domain BattleshipReflective {
       patch salvageStartTurn = nextSalvageStartTurn
       patch exploitThreshold = nextExploitThreshold
       patch policyMode = nextPolicyMode
-      patch lastRevisionReason = nextRevisionKind
+      patch lastRevisionReason = bestRevisionKind
       patch lastRevisionSource = revisionSource
+      patch lastRevisionDelta = bestRevisionDelta
       patch lastLLMRevisionFallback = fromLLMFallback
       patch revisionCount = add(revisionCount, 1)
       patch llmRevisionCount = cond(
@@ -536,6 +674,7 @@ domain BattleshipReflective {
       patch policyMode = nextMode
       patch lastRevisionReason = revisionKind
       patch lastRevisionSource = revisionSource
+      patch lastRevisionDelta = bestRevisionDelta
       patch lastLLMRevisionFallback = fromLLMFallback
       patch revisionCount = add(revisionCount, 1)
       patch llmRevisionCount = cond(
