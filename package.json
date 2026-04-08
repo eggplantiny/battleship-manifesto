@@ -1,0 +1,42 @@
+{
+  "name": "battleship-manifesto",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "check": "tsc -b",
+    "codify:typecheck": "pnpm --filter @battleship-manifesto/codify-agent typecheck",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "exp:run": "node --experimental-strip-types --experimental-transform-types --loader ./scripts/lib/resolve-ts-loader.mjs scripts/run-v2.ts",
+    "exp:legacy": "node --experimental-strip-types --experimental-transform-types --loader ./scripts/lib/resolve-ts-loader.mjs scripts/run-experiment.ts",
+    "exp:compare": "node --experimental-strip-types --experimental-transform-types --loader ./scripts/lib/resolve-ts-loader.mjs scripts/log-lens.ts --view compare",
+    "log:lens": "node --experimental-strip-types --experimental-transform-types --loader ./scripts/lib/resolve-ts-loader.mjs scripts/log-lens.ts",
+    "paper:data": "node --experimental-strip-types --experimental-transform-types --loader ./scripts/lib/resolve-ts-loader.mjs scripts/export-paper-data.ts"
+  },
+  "dependencies": {
+    "@manifesto-ai/lineage": "3.6.0",
+    "@manifesto-ai/sdk": "3.7.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@manifesto-ai/codegen": "0.2.5",
+    "@manifesto-ai/compiler": "3.3.0",
+    "@manifesto-ai/skills": "^1.0.0",
+    "@types/node": "^25.5.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.2.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.58.1",
+    "vite": "^8.0.7"
+  }
+}

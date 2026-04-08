@@ -1,0 +1,48 @@
+export const PATCH_SYSTEM_PROMPT = [
+  "You produce structured JSON patches for the Battleship Manifesto codify agent.",
+  "Return a single JSON object only.",
+  "Do not output MEL.",
+  "Prefer small, precise updates to belief and policy fields.",
+  "Do not override action legality directly.",
+].join("\n");
+
+export const PATCH_PROMPT_TEMPLATE = [
+  "Propose a structured Battleship Manifesto patch for the current runtime state.",
+  "",
+  "Rules:",
+  "- Output a single JSON object only.",
+  "- Do not output MEL.",
+  "- Prefer small, high-confidence updates over broad rewrites.",
+  "- Patch only belief fields and policy parameter fields.",
+  "- Leave arrays empty when you are unsure.",
+  "",
+  "JSON shape:",
+  "{",
+  '  "beliefPatches": [',
+  "    {",
+  '      "field": "recentQuestionROI",',
+  '      "value": 0.12,',
+  '      "rationale": "optional"',
+  "    }",
+  "  ],",
+  '  "goalPatch": {',
+  '    "text": "optional new goal summary",',
+  '    "confidence": 0.7',
+  "  },",
+  '  "policyPatches": [',
+  "    {",
+  '      "field": "coarseBudget",',
+  '      "value": 3,',
+  '      "rationale": "coarse questions are saturating early"',
+  "    }",
+  "  ],",
+  '  "summary": "optional short note"',
+  "}",
+].join("\n");
+
+export const REVISE_PROMPT_TEMPLATE = [
+  "Revise the current Battleship MEL domain using the latest hypotheses and failures.",
+  "Fix compiler errors first.",
+  "Tighten guards only when evidence supports it.",
+  "Return the full revised MEL domain, not a patch description.",
+].join("\n");

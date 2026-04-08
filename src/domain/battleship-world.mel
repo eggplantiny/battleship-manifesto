@@ -1,0 +1,297 @@
+domain BattleshipWorld {
+
+  type CellState = { id: string, status: string }
+
+  state {
+    cells: Array<CellState> = []
+    totalShipCells: number = 0
+    turnNumber: number = 0
+    shotsRemaining: number = 40
+    questionsRemaining: number = 15
+    shotsFired: number = 0
+    questionsAsked: number = 0
+    hitCount: number = 0
+    missCount: number = 0
+    frontierCount: number = 0
+    largestHitClusterSize: number = 0
+    bestHitProb: number = 0
+    bestSalvageQuestionId: string = ""
+    bestSalvageQuestionValue: number = 0
+    bestSalvageQuestionScore: number = 0
+    bestSalvageSplitQuality: number = 0
+    bestSalvageRegionMass: number = 0
+    bestSalvageClusterRelevance: number = 0
+    predictedActionKind: string = ""
+    predictedActionTarget: string = ""
+    predictedHitProb: number = 0
+    predictedAnswerProb: number = 0
+    predictedQuestionValue: number = 0
+    predictedGain: number = 0
+    predictionBaselineValue: number = 0
+    observedTurnCount: number = 0
+    predictionErrorEMA: number = 0
+    calibrationErrorEMA: number = 0
+    confidenceThreshold: number = 0.72
+    revisionCooldownTurns: number = 3
+    revisionCooldownRemaining: number = 0
+    revisionCount: number = 0
+    policyMode: string = "default"
+    lastRevisionReason: string = ""
+    coarseBudget: number = 6
+    localBudget: number = 2
+    lateBudget: number = 4
+    salvageStartTurn: number = 16
+    exploitThreshold: number = 0.55
+    llmEnabled: boolean = true
+    llmHitProbThreshold: number = 0.60
+    phase: string = "setup"
+    lastShotResult: string = ""
+    lastShotCellId: string = ""
+    lastQuestionId: string = ""
+  }
+
+  computed unknownCount = sub(64, add(hitCount, missCount))
+  computed shipCellsRemaining = sub(totalShipCells, hitCount)
+  computed allShipsSunk = eq(shipCellsRemaining, 0)
+  computed hitRate = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed progress = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingPrecision = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed targetingRecall = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingF1 = cond(
+    eq(add(targetingPrecision, targetingRecall), 0),
+    0,
+    div(mul(2, mul(targetingPrecision, targetingRecall)), add(targetingPrecision, targetingRecall))
+  )
+  computed modelConfidenceRaw = sub(1, div(add(predictionErrorEMA, calibrationErrorEMA), 2))
+  computed modelConfidence = cond(gt(modelConfidenceRaw, 0), modelConfidenceRaw, 0)
+  computed confident = gte(modelConfidence, confidenceThreshold)
+  computed needRevision = not(confident)
+  computed canRevisePolicy = and(needRevision, eq(revisionCooldownRemaining, 0))
+  computed shouldRevisePolicy = canRevisePolicy
+  computed hasAnyHitCluster = gt(largestHitClusterSize, 0)
+  computed lateSalvagePhase = and(gte(turnNumber, salvageStartTurn), hasAnyHitCluster, eq(frontierCount, 0))
+  computed llmSalvageQuestionAvailable = neq(bestSalvageQuestionId, "")
+  computed llmSalvageHitProbLow = lt(bestHitProb, llmHitProbThreshold)
+  computed llmSalvageEligible = and(
+    lateSalvagePhase,
+    llmSalvageQuestionAvailable,
+    gt(questionsRemaining, 0)
+  )
+  computed llmGateOpen = and(llmEnabled, llmSalvageEligible, llmSalvageHitProbLow)
+  computed canShoot = and(eq(phase, "playing"), gt(shotsRemaining, 0))
+  computed boardValue = progress
+
+  action initCells(board: Array<CellState>) {
+    onceIntent {
+      patch cells = board
+    }
+  }
+
+  action setupBoard(shipCellCount: number) {
+    onceIntent {
+      patch totalShipCells = shipCellCount
+      patch phase = "playing"
+    }
+  }
+
+  action configureReflection(nextConfidenceThreshold: number, nextRevisionCooldownTurns: number)
+    available when eq(phase, "playing") {
+    when or(lt(nextConfidenceThreshold, 0), gt(nextConfidenceThreshold, 1)) {
+      fail "INVALID_CONFIDENCE_THRESHOLD"
+    }
+    when lt(nextRevisionCooldownTurns, 0) {
+      fail "INVALID_REVISION_COOLDOWN"
+    }
+    onceIntent {
+      patch confidenceThreshold = nextConfidenceThreshold
+      patch revisionCooldownTurns = nextRevisionCooldownTurns
+    }
+  }
+
+  action shoot(cellId: string)
+    available when canShoot
+    dispatchable when eq(coalesce(findById(cells, cellId).status, ""), "unknown") {
+    onceIntent {
+      patch cells = updateById(cells, cellId, { status: "pending" })
+      patch turnNumber = add(turnNumber, 1)
+      patch shotsRemaining = sub(shotsRemaining, 1)
+      patch shotsFired = add(shotsFired, 1)
+      patch lastShotCellId = cellId
+    }
+  }
+
+  action recordHit(cellId: string) {
+    onceIntent {
+      patch cells = updateById(cells, cellId, { status: "hit" })
+      patch hitCount = add(hitCount, 1)
+      patch lastShotResult = "hit"
+    }
+  }
+
+  action recordMiss(cellId: string) {
+    onceIntent {
+      patch cells = updateById(cells, cellId, { status: "miss" })
+      patch missCount = add(missCount, 1)
+      patch lastShotResult = "miss"
+    }
+  }
+
+  action askQuestion(questionId: string, questionText: string)
+    available when and(eq(phase, "playing"), gt(questionsRemaining, 0)) {
+    onceIntent {
+      patch turnNumber = add(turnNumber, 1)
+      patch questionsRemaining = sub(questionsRemaining, 1)
+      patch questionsAsked = add(questionsAsked, 1)
+      patch lastQuestionId = questionId
+    }
+  }
+
+  action recordWorldSummary(
+    summaryFrontierCount: number,
+    summaryLargestHitClusterSize: number,
+    summaryBestHitProb: number,
+    summaryBestSalvageQuestionId: string,
+    summaryBestSalvageQuestionValue: number,
+    summaryBestSalvageQuestionScore: number,
+    summaryBestSalvageSplitQuality: number,
+    summaryBestSalvageRegionMass: number,
+    summaryBestSalvageClusterRelevance: number
+  ) available when eq(phase, "playing") {
+    onceIntent {
+      patch frontierCount = summaryFrontierCount
+      patch largestHitClusterSize = summaryLargestHitClusterSize
+      patch bestHitProb = summaryBestHitProb
+      patch bestSalvageQuestionId = summaryBestSalvageQuestionId
+      patch bestSalvageQuestionValue = summaryBestSalvageQuestionValue
+      patch bestSalvageQuestionScore = summaryBestSalvageQuestionScore
+      patch bestSalvageSplitQuality = summaryBestSalvageSplitQuality
+      patch bestSalvageRegionMass = summaryBestSalvageRegionMass
+      patch bestSalvageClusterRelevance = summaryBestSalvageClusterRelevance
+    }
+  }
+
+  action recordPrediction(
+    actionKind: string,
+    actionTarget: string,
+    hitProb: number,
+    answerProb: number,
+    questionValue: number,
+    gain: number,
+    baselineValue: number
+  ) available when eq(phase, "playing") {
+    onceIntent {
+      patch predictedActionKind = actionKind
+      patch predictedActionTarget = actionTarget
+      patch predictedHitProb = hitProb
+      patch predictedAnswerProb = answerProb
+      patch predictedQuestionValue = questionValue
+      patch predictedGain = gain
+      patch predictionBaselineValue = baselineValue
+    }
+  }
+
+  action recordObservation(observedSignal: number, realizedGain: number) {
+    onceIntent {
+      patch predictionErrorEMA = cond(
+        eq(observedTurnCount, 0),
+        cond(
+          eq(predictedActionKind, "question"),
+          cond(
+            gt(observedSignal, predictedAnswerProb),
+            sub(observedSignal, predictedAnswerProb),
+            sub(predictedAnswerProb, observedSignal)
+          ),
+          cond(
+            gt(observedSignal, predictedHitProb),
+            sub(observedSignal, predictedHitProb),
+            sub(predictedHitProb, observedSignal)
+          )
+        ),
+        div(
+          add(
+            mul(predictionErrorEMA, 3),
+            cond(
+              eq(predictedActionKind, "question"),
+              cond(
+                gt(observedSignal, predictedAnswerProb),
+                sub(observedSignal, predictedAnswerProb),
+                sub(predictedAnswerProb, observedSignal)
+              ),
+              cond(
+                gt(observedSignal, predictedHitProb),
+                sub(observedSignal, predictedHitProb),
+                sub(predictedHitProb, observedSignal)
+              )
+            )
+          ),
+          4
+        )
+      )
+      patch calibrationErrorEMA = cond(
+        eq(observedTurnCount, 0),
+        cond(
+          gt(realizedGain, predictedGain),
+          sub(realizedGain, predictedGain),
+          sub(predictedGain, realizedGain)
+        ),
+        div(
+          add(
+            mul(calibrationErrorEMA, 3),
+            cond(
+              gt(realizedGain, predictedGain),
+              sub(realizedGain, predictedGain),
+              sub(predictedGain, realizedGain)
+            )
+          ),
+          4
+        )
+      )
+      patch observedTurnCount = add(observedTurnCount, 1)
+      patch revisionCooldownRemaining = cond(
+        gt(revisionCooldownRemaining, 0),
+        sub(revisionCooldownRemaining, 1),
+        0
+      )
+    }
+  }
+
+  action retunePolicy(
+    nextCoarseBudget: number,
+    nextLocalBudget: number,
+    nextLateBudget: number,
+    nextSalvageStartTurn: number,
+    nextExploitThreshold: number,
+    nextPolicyMode: string,
+    nextRevisionReason: string
+  ) available when eq(phase, "playing") {
+    when or(lt(nextCoarseBudget, 0), lt(nextLocalBudget, 0), lt(nextLateBudget, 0)) {
+      fail "INVALID_POLICY_BUDGET"
+    }
+    when gt(add(add(nextCoarseBudget, nextLocalBudget), nextLateBudget), 15) {
+      fail "QUESTION_BUDGET_OVERFLOW"
+    }
+    when or(lt(nextSalvageStartTurn, 1), gt(nextSalvageStartTurn, 40)) {
+      fail "INVALID_SALVAGE_START"
+    }
+    when or(lt(nextExploitThreshold, 0), gt(nextExploitThreshold, 1)) {
+      fail "INVALID_EXPLOIT_THRESHOLD"
+    }
+    onceIntent {
+      patch coarseBudget = nextCoarseBudget
+      patch localBudget = nextLocalBudget
+      patch lateBudget = nextLateBudget
+      patch salvageStartTurn = nextSalvageStartTurn
+      patch exploitThreshold = nextExploitThreshold
+      patch policyMode = nextPolicyMode
+      patch lastRevisionReason = nextRevisionReason
+      patch revisionCount = add(revisionCount, 1)
+      patch revisionCooldownRemaining = revisionCooldownTurns
+    }
+  }
+
+  action endGame(result: string) {
+    onceIntent {
+      patch phase = result
+    }
+  }
+}

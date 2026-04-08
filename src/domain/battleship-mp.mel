@@ -1,0 +1,334 @@
+domain Battleship {
+
+  state {
+    totalShipCells: number = 0
+    turnNumber: number = 0
+    shotsRemaining: number = 40
+    questionsRemaining: number = 15
+    shotsFired: number = 0
+    questionsAsked: number = 0
+    hitCount: number = 0
+    missCount: number = 0
+    phase: string = "setup"
+    lastShotResult: string = ""
+    lastShotCellId: string = ""
+    lastQuestionId: string = ""
+
+    simBudget: number = 0
+    simCount: number = 0
+    bestSimCell: string = ""
+    bestSimHitProb: number = 0
+    bestSimBoardValue: number = 0
+    lastSimCell: string = ""
+    lastSimHitProb: number = 0
+    lastSimBoardValue: number = 0
+    thinkingPhase: string = "idle"
+    llmStatus: string = "idle"
+    llmDecisionAction: string = ""
+    llmDecisionCellId: string = ""
+    llmDecisionQuestionId: string = ""
+    llmDecisionQuestionText: string = ""
+    bestQuestionId: string = ""
+    bestQuestionText: string = ""
+    bestQuestionValue: number = 0
+    noisePenalty: number = 1
+    effectiveQuestionValue: number = 0
+    llmBudgetRemaining: number = 0
+
+    bestHitProb: number = 0
+    secondHitProb: number = 0
+    top2HitGap: number = 0
+    posteriorEntropy: number = 0
+    frontierCellCount: number = 0
+    remainingFitLength2: number = 0
+    remainingFitLength3: number = 0
+    remainingFitLength4: number = 0
+    remainingFitLength5: number = 0
+    totalRemainingFitCount: number = 0
+    recentQuestionROI: number = 0
+
+    bestProbePlanValue: number = 0
+    bestExploitPlanValue: number = 0
+    bestCloseoutPlanValue: number = 0
+    bestMacroPlanKind: string = ""
+    bestMacroPlanValue: number = 0
+
+    coarseQuestionsUsed: number = 0
+    localQuestionsUsed: number = 0
+    lateQuestionsUsed: number = 0
+  }
+
+  computed unknownCount = sub(64, add(hitCount, missCount))
+  computed shipCellsRemaining = sub(totalShipCells, hitCount)
+  computed allShipsSunk = eq(shipCellsRemaining, 0)
+  computed hitRate = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed progress = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingPrecision = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed targetingRecall = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingF1 = cond(
+    eq(add(targetingPrecision, targetingRecall), 0),
+    0,
+    div(mul(2, mul(targetingPrecision, targetingRecall)), add(targetingPrecision, targetingRecall))
+  )
+  computed boardValue = progress
+  computed confident = or(gt(bestSimHitProb, 0.5), gte(simCount, 3), eq(simBudget, 0))
+  computed questionEdge = sub(bestQuestionValue, bestSimBoardValue)
+  computed noiseAwareQuestionEdge = sub(effectiveQuestionValue, bestSimBoardValue)
+  computed earlyGame = lt(turnNumber, 9)
+  computed questionBudgetRich = gt(questionsRemaining, 7)
+  computed firstHitFound = gt(hitCount, 0)
+  computed preHitQuestionCapReached = and(eq(hitCount, 0), gte(coarseQuestionsUsed, 3))
+  computed shouldExplore = and(earlyGame, questionBudgetRich)
+  computed lateGame = or(gte(turnNumber, 25), lte(shotsRemaining, 15))
+  computed questionBudgetTight = lte(questionsRemaining, 5)
+  computed underQuestionTarget = and(
+    lt(questionsAsked, 7),
+    lt(turnNumber, 23),
+    not(lateGame),
+    or(firstHitFound, not(preHitQuestionCapReached))
+  )
+  computed tinyQuestionEdge = and(gt(noiseAwareQuestionEdge, 0), lte(noiseAwareQuestionEdge, 0.002))
+  computed questionSlightlyBetter = gt(noiseAwareQuestionEdge, 0.002)
+  computed questionDominates = gt(noiseAwareQuestionEdge, 0.03)
+  computed llmBudgetAvailable = gt(llmBudgetRemaining, 0)
+
+  computed highConfidenceFrontier = and(gt(bestHitProb, 0.62), lte(top2HitGap, 0.14))
+  computed diffusePosterior = and(lt(bestHitProb, 0.58), gt(posteriorEntropy, 0.55))
+  computed collapsedPosterior = or(gt(bestHitProb, 0.76), lt(frontierCellCount, 8))
+  computed shipFitTight = lt(totalRemainingFitCount, 24)
+  computed questionROIPositive = gt(recentQuestionROI, 0.015)
+  computed bestShootPlanValue = cond(gt(bestExploitPlanValue, bestCloseoutPlanValue), bestExploitPlanValue, bestCloseoutPlanValue)
+  computed macroPlanGap = sub(bestProbePlanValue, bestShootPlanValue)
+  computed macroProbeDominates = gt(bestProbePlanValue, bestShootPlanValue)
+  computed macroExploitDominates = gt(bestShootPlanValue, bestProbePlanValue)
+  computed macroExplorePreferred = and(macroProbeDominates, or(diffusePosterior, questionROIPositive))
+  computed macroExploitPreferred = and(macroExploitDominates, or(collapsedPosterior, shipFitTight, not(questionROIPositive)))
+
+  computed autoQuestionPreferred = or(
+    macroExplorePreferred,
+    questionDominates,
+    and(shouldExplore, not(preHitQuestionCapReached), questionSlightlyBetter),
+    and(underQuestionTarget, questionSlightlyBetter)
+  )
+  computed autoShootPreferred = or(
+    macroExploitPreferred,
+    gte(bestSimHitProb, 0.74),
+    lte(noiseAwareQuestionEdge, 0),
+    preHitQuestionCapReached,
+    questionBudgetTight,
+    tinyQuestionEdge,
+    and(lateGame, not(questionROIPositive)),
+    and(lateGame, lte(noiseAwareQuestionEdge, 0.055))
+  )
+  computed llmAdjudicationNeeded = and(
+    firstHitFound,
+    gt(noiseAwareQuestionEdge, 0.006),
+    lte(noiseAwareQuestionEdge, 0.02),
+    llmBudgetAvailable,
+    not(autoQuestionPreferred),
+    not(autoShootPreferred)
+  )
+
+  action setupBoard(shipCellCount: number) {
+    onceIntent {
+      patch totalShipCells = shipCellCount
+      patch phase = "playing"
+    }
+  }
+
+  action shoot(cellId: string) available when and(eq(phase, "playing"), gt(shotsRemaining, 0), confident) {
+    onceIntent {
+      patch turnNumber = add(turnNumber, 1)
+      patch shotsRemaining = sub(shotsRemaining, 1)
+      patch shotsFired = add(shotsFired, 1)
+      patch lastShotCellId = cellId
+    }
+  }
+
+  action recordHit(cellId: string) {
+    onceIntent {
+      patch hitCount = add(hitCount, 1)
+      patch lastShotResult = "hit"
+    }
+  }
+
+  action recordMiss(cellId: string) {
+    onceIntent {
+      patch missCount = add(missCount, 1)
+      patch lastShotResult = "miss"
+    }
+  }
+
+  action askQuestion(questionId: string, questionText: string) available when and(eq(phase, "playing"), gt(questionsRemaining, 0)) {
+    onceIntent {
+      patch turnNumber = add(turnNumber, 1)
+      patch questionsRemaining = sub(questionsRemaining, 1)
+      patch questionsAsked = add(questionsAsked, 1)
+      patch lastQuestionId = questionId
+    }
+  }
+
+  action endGame(result: string) {
+    onceIntent {
+      patch phase = result
+    }
+  }
+
+  action startTurn() available when eq(phase, "playing") {
+    onceIntent {
+      patch simBudget = 10
+      patch simCount = 0
+      patch bestSimCell = ""
+      patch bestSimHitProb = 0
+      patch bestSimBoardValue = 0
+      patch lastSimCell = ""
+      patch lastSimHitProb = 0
+      patch lastSimBoardValue = 0
+      patch thinkingPhase = "planning"
+      patch llmStatus = "idle"
+      patch llmDecisionAction = ""
+      patch llmDecisionCellId = ""
+      patch llmDecisionQuestionId = ""
+      patch llmDecisionQuestionText = ""
+      patch bestQuestionId = ""
+      patch bestQuestionText = ""
+      patch bestQuestionValue = 0
+      patch noisePenalty = 1
+      patch effectiveQuestionValue = 0
+      patch llmBudgetRemaining = 0
+      patch bestHitProb = 0
+      patch secondHitProb = 0
+      patch top2HitGap = 0
+      patch posteriorEntropy = 0
+      patch frontierCellCount = 0
+      patch remainingFitLength2 = 0
+      patch remainingFitLength3 = 0
+      patch remainingFitLength4 = 0
+      patch remainingFitLength5 = 0
+      patch totalRemainingFitCount = 0
+      patch recentQuestionROI = 0
+      patch bestProbePlanValue = 0
+      patch bestExploitPlanValue = 0
+      patch bestCloseoutPlanValue = 0
+      patch bestMacroPlanKind = ""
+      patch bestMacroPlanValue = 0
+      patch coarseQuestionsUsed = 0
+      patch localQuestionsUsed = 0
+      patch lateQuestionsUsed = 0
+    }
+  }
+
+  action think(cellId: string) available when and(eq(thinkingPhase, "planning"), gt(simBudget, 0)) {
+    onceIntent {
+      patch simBudget = sub(simBudget, 1)
+      patch simCount = add(simCount, 1)
+      patch lastSimCell = cellId
+    }
+  }
+
+  action recordSimResult(cell: string, hitProb: number, simBoardValue: number) {
+    onceIntent {
+      patch lastSimHitProb = hitProb
+      patch lastSimBoardValue = simBoardValue
+      patch bestSimCell = cond(gt(simBoardValue, bestSimBoardValue), cell, bestSimCell)
+      patch bestSimHitProb = cond(gt(simBoardValue, bestSimBoardValue), hitProb, bestSimHitProb)
+      patch bestSimBoardValue = cond(gt(simBoardValue, bestSimBoardValue), simBoardValue, bestSimBoardValue)
+    }
+  }
+
+  action recordQuestionCandidate(questionId: string, questionText: string, questionValue: number) available when eq(thinkingPhase, "planning") {
+    onceIntent {
+      patch bestQuestionId = questionId
+      patch bestQuestionText = questionText
+      patch bestQuestionValue = questionValue
+    }
+  }
+
+  action recordBeliefSummary(
+    summaryBestHitProb: number,
+    summarySecondHitProb: number,
+    summaryTop2HitGap: number,
+    summaryPosteriorEntropy: number,
+    summaryFrontierCellCount: number,
+    summaryFitLength2: number,
+    summaryFitLength3: number,
+    summaryFitLength4: number,
+    summaryFitLength5: number,
+    summaryTotalRemainingFitCount: number,
+    summaryRecentQuestionROI: number
+  ) available when eq(thinkingPhase, "planning") {
+    onceIntent {
+      patch bestHitProb = summaryBestHitProb
+      patch secondHitProb = summarySecondHitProb
+      patch top2HitGap = summaryTop2HitGap
+      patch posteriorEntropy = summaryPosteriorEntropy
+      patch frontierCellCount = summaryFrontierCellCount
+      patch remainingFitLength2 = summaryFitLength2
+      patch remainingFitLength3 = summaryFitLength3
+      patch remainingFitLength4 = summaryFitLength4
+      patch remainingFitLength5 = summaryFitLength5
+      patch totalRemainingFitCount = summaryTotalRemainingFitCount
+      patch recentQuestionROI = summaryRecentQuestionROI
+    }
+  }
+
+  action recordMacroPlans(
+    probePlanValue: number,
+    exploitPlanValue: number,
+    closeoutPlanValue: number,
+    macroPlanKind: string,
+    macroPlanValue: number
+  ) available when eq(thinkingPhase, "planning") {
+    onceIntent {
+      patch bestProbePlanValue = probePlanValue
+      patch bestExploitPlanValue = exploitPlanValue
+      patch bestCloseoutPlanValue = closeoutPlanValue
+      patch bestMacroPlanKind = macroPlanKind
+      patch bestMacroPlanValue = macroPlanValue
+    }
+  }
+
+  action recordPolicyState(
+    policyNoisePenalty: number,
+    policyQuestionValue: number,
+    policyLLMBudgetRemaining: number,
+    policyCoarseQuestionsUsed: number,
+    policyLocalQuestionsUsed: number,
+    policyLateQuestionsUsed: number
+  ) available when eq(thinkingPhase, "planning") {
+    onceIntent {
+      patch noisePenalty = policyNoisePenalty
+      patch effectiveQuestionValue = policyQuestionValue
+      patch llmBudgetRemaining = policyLLMBudgetRemaining
+      patch coarseQuestionsUsed = policyCoarseQuestionsUsed
+      patch localQuestionsUsed = policyLocalQuestionsUsed
+      patch lateQuestionsUsed = policyLateQuestionsUsed
+    }
+  }
+
+  action requestLLMDecision(
+    systemPrompt: string,
+    userPrompt: string,
+    candidateCellsCsv: string,
+    bestQuestionId: string,
+    bestQuestionText: string
+  ) available when and(eq(thinkingPhase, "planning"), eq(llmStatus, "idle")) {
+    onceIntent {
+      patch llmStatus = "pending"
+      patch thinkingPhase = "waiting_llm"
+      effect llm.decide({
+        systemPrompt: systemPrompt,
+        userPrompt: userPrompt,
+        candidateCellsCsv: candidateCellsCsv,
+        bestQuestionId: bestQuestionId,
+        bestQuestionText: bestQuestionText
+      })
+    }
+  }
+
+  action commitAction() {
+    onceIntent {
+      patch thinkingPhase = "decided"
+    }
+  }
+}

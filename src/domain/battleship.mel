@@ -1,0 +1,76 @@
+domain Battleship {
+
+  state {
+    totalShipCells: number = 0
+    turnNumber: number = 0
+    shotsRemaining: number = 40
+    questionsRemaining: number = 15
+    shotsFired: number = 0
+    questionsAsked: number = 0
+    hitCount: number = 0
+    missCount: number = 0
+    phase: string = "setup"
+    lastShotResult: string = ""
+    lastShotCellId: string = ""
+    lastQuestionId: string = ""
+  }
+
+  computed unknownCount = sub(64, add(hitCount, missCount))
+  computed shipCellsRemaining = sub(totalShipCells, hitCount)
+  computed allShipsSunk = eq(shipCellsRemaining, 0)
+  computed hitRate = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed progress = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingPrecision = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed targetingRecall = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingF1 = cond(
+    eq(add(targetingPrecision, targetingRecall), 0),
+    0,
+    div(mul(2, mul(targetingPrecision, targetingRecall)), add(targetingPrecision, targetingRecall))
+  )
+  computed boardValue = progress
+
+  action setupBoard(shipCellCount: number) {
+    onceIntent {
+      patch totalShipCells = shipCellCount
+      patch phase = "playing"
+    }
+  }
+
+  action shoot(cellId: string) available when and(eq(phase, "playing"), gt(shotsRemaining, 0)) {
+    onceIntent {
+      patch turnNumber = add(turnNumber, 1)
+      patch shotsRemaining = sub(shotsRemaining, 1)
+      patch shotsFired = add(shotsFired, 1)
+      patch lastShotCellId = cellId
+    }
+  }
+
+  action recordHit(cellId: string) {
+    onceIntent {
+      patch hitCount = add(hitCount, 1)
+      patch lastShotResult = "hit"
+    }
+  }
+
+  action recordMiss(cellId: string) {
+    onceIntent {
+      patch missCount = add(missCount, 1)
+      patch lastShotResult = "miss"
+    }
+  }
+
+  action askQuestion(questionId: string, questionText: string) available when and(eq(phase, "playing"), gt(questionsRemaining, 0)) {
+    onceIntent {
+      patch turnNumber = add(turnNumber, 1)
+      patch questionsRemaining = sub(questionsRemaining, 1)
+      patch questionsAsked = add(questionsAsked, 1)
+      patch lastQuestionId = questionId
+    }
+  }
+
+  action endGame(result: string) {
+    onceIntent {
+      patch phase = result
+    }
+  }
+}

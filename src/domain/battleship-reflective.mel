@@ -1,0 +1,555 @@
+domain BattleshipReflective {
+
+  type CellState = { id: string, status: string }
+
+  state {
+    cells: Array<CellState> = []
+    totalShipCells: number = 0
+    turnNumber: number = 0
+    shotsRemaining: number = 40
+    questionsRemaining: number = 15
+    shotsFired: number = 0
+    questionsAsked: number = 0
+    hitCount: number = 0
+    missCount: number = 0
+    frontierCount: number = 0
+    largestHitClusterSize: number = 0
+    bestHitProb: number = 0
+    bestSalvageQuestionId: string = ""
+    bestSalvageQuestionValue: number = 0
+    bestSalvageQuestionScore: number = 0
+    bestSalvageSplitQuality: number = 0
+    bestSalvageRegionMass: number = 0
+    bestSalvageClusterRelevance: number = 0
+    bestShootCellId: string = ""
+    bestShootCellIndex: number = 0
+    bestShootBoardValue: number = 0
+    bestQuestionId: string = ""
+    bestQuestionValue: number = 0
+    bestQuestionAnswerProb: number = 0
+    bestQuestionBucket: string = ""
+    currentPolicyPreviewValue: number = 0
+    coarseCollapsePreviewValue: number = 0
+    lateDiffusePreviewValue: number = 0
+    clusterCloseoutPreviewValue: number = 0
+    coarseQuestionsUsed: number = 0
+    localQuestionsUsed: number = 0
+    lateQuestionsUsed: number = 0
+    predictedActionKind: string = ""
+    predictedActionTarget: string = ""
+    predictedHitProb: number = 0
+    predictedAnswerProb: number = 0
+    predictedQuestionValue: number = 0
+    predictedGain: number = 0
+    predictionBaselineValue: number = 0
+    observedTurnCount: number = 0
+    predictionErrorEMA: number = 0
+    calibrationErrorEMA: number = 0
+    lowConfidenceStreak: number = 0
+    confidenceThreshold: number = 0.72
+    minRevisionDelta: number = 0.01
+    revisionCooldownTurns: number = 3
+    revisionCooldownRemaining: number = 0
+    revisionEnabled: boolean = true
+    llmRevisionEnabled: boolean = false
+    llmRevisionBudget: number = 999
+    llmRevisionCount: number = 0
+    revisionCount: number = 0
+    policyMode: string = "default"
+    lastRevisionReason: string = ""
+    lastRevisionSource: string = ""
+    lastLLMRevisionFallback: boolean = false
+    coarseBudget: number = 6
+    localBudget: number = 2
+    lateBudget: number = 4
+    salvageStartTurn: number = 16
+    exploitThreshold: number = 0.55
+    phase: string = "setup"
+    lastShotResult: string = ""
+    lastShotCellId: string = ""
+    lastQuestionId: string = ""
+  }
+
+  computed unknownCount = sub(64, add(hitCount, missCount))
+  computed shipCellsRemaining = sub(totalShipCells, hitCount)
+  computed allShipsSunk = eq(shipCellsRemaining, 0)
+  computed hitRate = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed progress = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingPrecision = cond(eq(shotsFired, 0), 0, div(hitCount, shotsFired))
+  computed targetingRecall = cond(eq(totalShipCells, 0), 0, div(hitCount, totalShipCells))
+  computed targetingF1 = cond(
+    eq(add(targetingPrecision, targetingRecall), 0),
+    0,
+    div(mul(2, mul(targetingPrecision, targetingRecall)), add(targetingPrecision, targetingRecall))
+  )
+  computed boardValue = progress
+
+  computed modelConfidenceRaw = sub(1, div(add(predictionErrorEMA, calibrationErrorEMA), 2))
+  computed modelConfidence = cond(gt(modelConfidenceRaw, 0), modelConfidenceRaw, 0)
+  computed confident = gte(modelConfidence, confidenceThreshold)
+  computed needRevision = not(confident)
+  computed canRevisePolicy = and(needRevision, eq(revisionCooldownRemaining, 0))
+  computed sustainedLowConfidence = gte(lowConfidenceStreak, 2)
+  computed llmRevisionBudgetOpen = lt(llmRevisionCount, llmRevisionBudget)
+  computed llmRevisionAvailable = and(llmRevisionEnabled, llmRevisionBudgetOpen)
+
+  computed hasAnyHitCluster = gt(largestHitClusterSize, 0)
+  computed lateSalvagePhase = and(gte(turnNumber, salvageStartTurn), hasAnyHitCluster, eq(frontierCount, 0))
+  computed currentQuestionBucket = cond(
+    not(hasAnyHitCluster),
+    "coarse",
+    cond(lateSalvagePhase, "late", "local")
+  )
+  computed questionFamilyMode = currentQuestionBucket
+  computed coarseBudgetOpen = lt(coarseQuestionsUsed, coarseBudget)
+  computed localBudgetOpen = lt(localQuestionsUsed, localBudget)
+  computed lateBudgetOpen = lt(lateQuestionsUsed, lateBudget)
+  computed questionBudgetOpen = cond(
+    eq(questionFamilyMode, "coarse"),
+    coarseBudgetOpen,
+    cond(eq(questionFamilyMode, "late"), lateBudgetOpen, localBudgetOpen)
+  )
+  computed frontierExploitForced = gte(bestHitProb, exploitThreshold)
+  computed questionCandidateAvailable = neq(bestQuestionId, "")
+  computed questionOutvaluesShot = gt(bestQuestionValue, bestShootBoardValue)
+  computed preferQuestion = and(
+    questionBudgetOpen,
+    questionCandidateAvailable,
+    questionOutvaluesShot,
+    not(frontierExploitForced)
+  )
+  computed preferExploitShot = or(frontierExploitForced, not(preferQuestion))
+
+  computed coarseRoiCollapsed = and(
+    lte(turnNumber, 10),
+    eq(hitCount, 0),
+    gte(coarseQuestionsUsed, 2),
+    gt(coarseBudget, 2)
+  )
+  computed lateDiffuseReprobeEligible = and(
+    gte(turnNumber, salvageStartTurn),
+    eq(frontierCount, 0),
+    gt(largestHitClusterSize, 0),
+    lt(lateBudget, 6)
+  )
+  computed clusterCloseoutBiasEligible = and(
+    gte(largestHitClusterSize, 2),
+    gt(exploitThreshold, 0.4)
+  )
+  computed coarseCollapseDelta = sub(coarseCollapsePreviewValue, currentPolicyPreviewValue)
+  computed lateDiffuseDelta = sub(lateDiffusePreviewValue, currentPolicyPreviewValue)
+  computed clusterCloseoutDelta = sub(clusterCloseoutPreviewValue, currentPolicyPreviewValue)
+  computed coarseCollapseCandidate = and(coarseRoiCollapsed, gte(coarseCollapseDelta, sub(0, minRevisionDelta)))
+  computed lateDiffuseCandidate = and(lateDiffuseReprobeEligible, gt(lateDiffuseDelta, minRevisionDelta))
+  computed clusterCloseoutCandidate = and(clusterCloseoutBiasEligible, gt(clusterCloseoutDelta, minRevisionDelta))
+  computed nextRevisionKind = cond(
+    and(
+      coarseCollapseCandidate,
+      and(
+        or(not(lateDiffuseCandidate), gte(coarseCollapseDelta, lateDiffuseDelta)),
+        or(not(clusterCloseoutCandidate), gte(coarseCollapseDelta, clusterCloseoutDelta))
+      )
+    ),
+    "coarse_roi_collapse",
+    cond(
+      and(
+        lateDiffuseCandidate,
+        or(not(clusterCloseoutCandidate), gte(lateDiffuseDelta, clusterCloseoutDelta))
+      ),
+      "late_diffuse_reprobe",
+      cond(clusterCloseoutCandidate, "cluster_closeout_bias", "")
+    )
+  )
+  computed bestRevisionDelta = cond(
+    eq(nextRevisionKind, "coarse_roi_collapse"),
+    coarseCollapseDelta,
+    cond(
+      eq(nextRevisionKind, "late_diffuse_reprobe"),
+      lateDiffuseDelta,
+      cond(eq(nextRevisionKind, "cluster_closeout_bias"), clusterCloseoutDelta, 0)
+    )
+  )
+  computed positiveRevisionPreview = or(
+    gt(bestRevisionDelta, minRevisionDelta),
+    and(eq(nextRevisionKind, "coarse_roi_collapse"), coarseCollapseCandidate)
+  )
+  computed nextPolicyMode = cond(
+    eq(nextRevisionKind, "coarse_roi_collapse"),
+    "coarse-reduced",
+    cond(
+      eq(nextRevisionKind, "late_diffuse_reprobe"),
+      "late-reprobe",
+      cond(eq(nextRevisionKind, "cluster_closeout_bias"), "closeout", policyMode)
+    )
+  )
+  computed nextCoarseBudget = cond(
+    eq(nextRevisionKind, "coarse_roi_collapse"),
+    sub(coarseBudget, 1),
+    coarseBudget
+  )
+  computed nextLocalBudget = cond(
+    eq(nextRevisionKind, "coarse_roi_collapse"),
+    add(localBudget, 1),
+    cond(
+      eq(nextRevisionKind, "late_diffuse_reprobe"),
+      cond(gt(localBudget, 0), sub(localBudget, 1), 0),
+      localBudget
+    )
+  )
+  computed nextLateBudget = cond(
+    eq(nextRevisionKind, "late_diffuse_reprobe"),
+    add(lateBudget, 1),
+    lateBudget
+  )
+  computed nextSalvageStartTurn = cond(
+    eq(nextRevisionKind, "late_diffuse_reprobe"),
+    cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
+    cond(
+      eq(nextRevisionKind, "cluster_closeout_bias"),
+      cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
+      salvageStartTurn
+    )
+  )
+  computed nextExploitThreshold = cond(
+    eq(nextRevisionKind, "cluster_closeout_bias"),
+    cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.05), 0.4),
+    exploitThreshold
+  )
+  computed revisionRequested = and(
+    canRevisePolicy,
+    sustainedLowConfidence,
+    positiveRevisionPreview,
+    neq(nextRevisionKind, "")
+  )
+  computed shouldRevisePolicy = and(revisionEnabled, revisionRequested)
+
+  computed canShoot = and(eq(phase, "playing"), gt(shotsRemaining, 0))
+
+  action initCells(board: Array<CellState>) {
+    onceIntent {
+      patch cells = board
+    }
+  }
+
+  action setupBoard(shipCellCount: number) {
+    onceIntent {
+      patch totalShipCells = shipCellCount
+      patch phase = "playing"
+    }
+  }
+
+  action configureReflection(nextConfidenceThreshold: number, nextRevisionCooldownTurns: number)
+    available when eq(phase, "playing") {
+    when or(lt(nextConfidenceThreshold, 0), gt(nextConfidenceThreshold, 1)) {
+      fail "INVALID_CONFIDENCE_THRESHOLD"
+    }
+    when lt(nextRevisionCooldownTurns, 0) {
+      fail "INVALID_REVISION_COOLDOWN"
+    }
+    onceIntent {
+      patch confidenceThreshold = nextConfidenceThreshold
+      patch revisionCooldownTurns = nextRevisionCooldownTurns
+    }
+  }
+
+  action configureRevisionControls(
+    nextRevisionEnabled: boolean,
+    nextLLMRevisionEnabled: boolean,
+    nextLLMRevisionBudget: number
+  ) available when eq(phase, "playing") {
+    when lt(nextLLMRevisionBudget, 0) {
+      fail "INVALID_LLM_REVISION_BUDGET"
+    }
+    onceIntent {
+      patch revisionEnabled = nextRevisionEnabled
+      patch llmRevisionEnabled = nextLLMRevisionEnabled
+      patch llmRevisionBudget = nextLLMRevisionBudget
+    }
+  }
+
+  action shoot(cellId: string)
+    available when canShoot
+    dispatchable when eq(coalesce(findById(cells, cellId).status, ""), "unknown") {
+    onceIntent {
+      patch cells = updateById(cells, cellId, { status: "pending" })
+      patch turnNumber = add(turnNumber, 1)
+      patch shotsRemaining = sub(shotsRemaining, 1)
+      patch shotsFired = add(shotsFired, 1)
+      patch lastShotCellId = cellId
+    }
+  }
+
+  action recordHit(cellId: string) {
+    onceIntent {
+      patch cells = updateById(cells, cellId, { status: "hit" })
+      patch hitCount = add(hitCount, 1)
+      patch lastShotResult = "hit"
+    }
+  }
+
+  action recordMiss(cellId: string) {
+    onceIntent {
+      patch cells = updateById(cells, cellId, { status: "miss" })
+      patch missCount = add(missCount, 1)
+      patch lastShotResult = "miss"
+    }
+  }
+
+  action askQuestion(questionId: string, questionText: string)
+    available when and(eq(phase, "playing"), gt(questionsRemaining, 0)) {
+    onceIntent {
+      patch turnNumber = add(turnNumber, 1)
+      patch questionsRemaining = sub(questionsRemaining, 1)
+      patch questionsAsked = add(questionsAsked, 1)
+      patch lastQuestionId = questionId
+      patch coarseQuestionsUsed = cond(
+        eq(currentQuestionBucket, "coarse"),
+        add(coarseQuestionsUsed, 1),
+        coarseQuestionsUsed
+      )
+      patch localQuestionsUsed = cond(
+        eq(currentQuestionBucket, "local"),
+        add(localQuestionsUsed, 1),
+        localQuestionsUsed
+      )
+      patch lateQuestionsUsed = cond(
+        eq(currentQuestionBucket, "late"),
+        add(lateQuestionsUsed, 1),
+        lateQuestionsUsed
+      )
+    }
+  }
+
+  action recordWorldSummary(
+    summaryFrontierCount: number,
+    summaryLargestHitClusterSize: number,
+    summaryBestHitProb: number,
+    summaryBestSalvageQuestionId: string,
+    summaryBestSalvageQuestionValue: number,
+    summaryBestSalvageQuestionScore: number,
+    summaryBestSalvageSplitQuality: number,
+    summaryBestSalvageRegionMass: number,
+    summaryBestSalvageClusterRelevance: number
+  ) available when eq(phase, "playing") {
+    onceIntent {
+      patch frontierCount = summaryFrontierCount
+      patch largestHitClusterSize = summaryLargestHitClusterSize
+      patch bestHitProb = summaryBestHitProb
+      patch bestSalvageQuestionId = summaryBestSalvageQuestionId
+      patch bestSalvageQuestionValue = summaryBestSalvageQuestionValue
+      patch bestSalvageQuestionScore = summaryBestSalvageQuestionScore
+      patch bestSalvageSplitQuality = summaryBestSalvageSplitQuality
+      patch bestSalvageRegionMass = summaryBestSalvageRegionMass
+      patch bestSalvageClusterRelevance = summaryBestSalvageClusterRelevance
+    }
+  }
+
+  action recordDecisionContext(
+    decisionBestShootCellId: string,
+    decisionBestShootCellIndex: number,
+    decisionBestShootBoardValue: number,
+    decisionBestQuestionId: string,
+    decisionBestQuestionValue: number,
+    decisionBestQuestionAnswerProb: number,
+    decisionBestQuestionBucket: string
+  ) available when eq(phase, "playing") {
+    onceIntent {
+      patch bestShootCellId = decisionBestShootCellId
+      patch bestShootCellIndex = decisionBestShootCellIndex
+      patch bestShootBoardValue = decisionBestShootBoardValue
+      patch bestQuestionId = decisionBestQuestionId
+      patch bestQuestionValue = decisionBestQuestionValue
+      patch bestQuestionAnswerProb = decisionBestQuestionAnswerProb
+      patch bestQuestionBucket = decisionBestQuestionBucket
+    }
+  }
+
+  action recordRevisionPreview(
+    previewCurrentPolicyValue: number,
+    previewCoarseCollapseValue: number,
+    previewLateDiffuseValue: number,
+    previewClusterCloseoutValue: number
+  ) available when eq(phase, "playing") {
+    onceIntent {
+      patch currentPolicyPreviewValue = previewCurrentPolicyValue
+      patch coarseCollapsePreviewValue = previewCoarseCollapseValue
+      patch lateDiffusePreviewValue = previewLateDiffuseValue
+      patch clusterCloseoutPreviewValue = previewClusterCloseoutValue
+    }
+  }
+
+  action recordPrediction(
+    actionKind: string,
+    actionTarget: string,
+    hitProb: number,
+    answerProb: number,
+    questionValue: number,
+    gain: number,
+    baselineValue: number
+  ) available when eq(phase, "playing") {
+    onceIntent {
+      patch predictedActionKind = actionKind
+      patch predictedActionTarget = actionTarget
+      patch predictedHitProb = hitProb
+      patch predictedAnswerProb = answerProb
+      patch predictedQuestionValue = questionValue
+      patch predictedGain = gain
+      patch predictionBaselineValue = baselineValue
+    }
+  }
+
+  action recordObservation(observedSignal: number, realizedGain: number) {
+    onceIntent {
+      patch predictionErrorEMA = cond(
+        eq(observedTurnCount, 0),
+        cond(
+          eq(predictedActionKind, "question"),
+          cond(
+            gt(observedSignal, predictedAnswerProb),
+            sub(observedSignal, predictedAnswerProb),
+            sub(predictedAnswerProb, observedSignal)
+          ),
+          cond(
+            gt(observedSignal, predictedHitProb),
+            sub(observedSignal, predictedHitProb),
+            sub(predictedHitProb, observedSignal)
+          )
+        ),
+        div(
+          add(
+            mul(predictionErrorEMA, 3),
+            cond(
+              eq(predictedActionKind, "question"),
+              cond(
+                gt(observedSignal, predictedAnswerProb),
+                sub(observedSignal, predictedAnswerProb),
+                sub(predictedAnswerProb, observedSignal)
+              ),
+              cond(
+                gt(observedSignal, predictedHitProb),
+                sub(observedSignal, predictedHitProb),
+                sub(predictedHitProb, observedSignal)
+              )
+            )
+          ),
+          4
+        )
+      )
+      patch calibrationErrorEMA = cond(
+        eq(observedTurnCount, 0),
+        cond(
+          gt(realizedGain, predictedGain),
+          sub(realizedGain, predictedGain),
+          sub(predictedGain, realizedGain)
+        ),
+        div(
+          add(
+            mul(calibrationErrorEMA, 3),
+            cond(
+              gt(realizedGain, predictedGain),
+              sub(realizedGain, predictedGain),
+              sub(predictedGain, realizedGain)
+            )
+          ),
+          4
+        )
+      )
+      patch observedTurnCount = add(observedTurnCount, 1)
+      patch revisionCooldownRemaining = cond(
+        gt(revisionCooldownRemaining, 0),
+        sub(revisionCooldownRemaining, 1),
+        0
+      )
+    }
+  }
+
+  action updateConfidenceStreak(isLowConfidence: boolean) available when eq(phase, "playing") {
+    onceIntent {
+      patch lowConfidenceStreak = cond(
+        isLowConfidence,
+        add(lowConfidenceStreak, 1),
+        0
+      )
+    }
+  }
+
+  action applyRevisionPreset(revisionSource: string, fromLLMFallback: boolean) available when eq(phase, "playing") {
+    when not(shouldRevisePolicy) {
+      fail "NO_REVISION_REQUESTED"
+    }
+    onceIntent {
+      patch coarseBudget = nextCoarseBudget
+      patch localBudget = nextLocalBudget
+      patch lateBudget = nextLateBudget
+      patch salvageStartTurn = nextSalvageStartTurn
+      patch exploitThreshold = nextExploitThreshold
+      patch policyMode = nextPolicyMode
+      patch lastRevisionReason = nextRevisionKind
+      patch lastRevisionSource = revisionSource
+      patch lastLLMRevisionFallback = fromLLMFallback
+      patch revisionCount = add(revisionCount, 1)
+      patch llmRevisionCount = cond(
+        eq(revisionSource, "llm"),
+        add(llmRevisionCount, 1),
+        llmRevisionCount
+      )
+      patch revisionCooldownRemaining = revisionCooldownTurns
+    }
+  }
+
+  action applyRevisionPatch(
+    revisionKind: string,
+    nextMode: string,
+    nextCoarseBudgetValue: number,
+    nextLocalBudgetValue: number,
+    nextLateBudgetValue: number,
+    nextSalvageStartTurnValue: number,
+    nextExploitThresholdValue: number,
+    revisionSource: string,
+    fromLLMFallback: boolean
+  ) available when eq(phase, "playing") {
+    when not(shouldRevisePolicy) {
+      fail "NO_REVISION_REQUESTED"
+    }
+    when or(
+      lt(nextCoarseBudgetValue, 0),
+      lt(nextLocalBudgetValue, 0),
+      lt(nextLateBudgetValue, 0)
+    ) {
+      fail "INVALID_REVISION_BUDGET"
+    }
+    when gt(add(add(nextCoarseBudgetValue, nextLocalBudgetValue), nextLateBudgetValue), 15) {
+      fail "INVALID_REVISION_TOTAL_BUDGET"
+    }
+    when or(lt(nextSalvageStartTurnValue, 1), gt(nextSalvageStartTurnValue, 40)) {
+      fail "INVALID_SALVAGE_START_TURN"
+    }
+    when or(lt(nextExploitThresholdValue, 0), gt(nextExploitThresholdValue, 1)) {
+      fail "INVALID_EXPLOIT_THRESHOLD"
+    }
+    onceIntent {
+      patch coarseBudget = nextCoarseBudgetValue
+      patch localBudget = nextLocalBudgetValue
+      patch lateBudget = nextLateBudgetValue
+      patch salvageStartTurn = nextSalvageStartTurnValue
+      patch exploitThreshold = nextExploitThresholdValue
+      patch policyMode = nextMode
+      patch lastRevisionReason = revisionKind
+      patch lastRevisionSource = revisionSource
+      patch lastLLMRevisionFallback = fromLLMFallback
+      patch revisionCount = add(revisionCount, 1)
+      patch llmRevisionCount = cond(
+        eq(revisionSource, "llm"),
+        add(llmRevisionCount, 1),
+        llmRevisionCount
+      )
+      patch revisionCooldownRemaining = revisionCooldownTurns
+    }
+  }
+
+  action endGame(result: string) {
+    onceIntent {
+      patch phase = result
+    }
+  }
+}
