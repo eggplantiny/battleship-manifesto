@@ -274,4 +274,3 @@ Still intentionally open:
 - exact published-board benchmark matching
 - larger-seed confirmation runs
 - stronger LLM revision policies
-- cross-episode codify integration

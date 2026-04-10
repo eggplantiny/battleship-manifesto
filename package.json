@@ -11,7 +11,6 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "check": "tsc -b",
-    "codify:typecheck": "pnpm --filter @battleship-manifesto/codify-agent typecheck",
     "lint": "eslint .",
     "preview": "vite preview",
     "exp:run": "node --experimental-strip-types --experimental-transform-types --loader ./scripts/lib/resolve-ts-loader.mjs scripts/run-v2.ts",
