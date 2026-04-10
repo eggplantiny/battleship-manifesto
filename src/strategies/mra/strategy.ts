@@ -26,14 +26,18 @@ const DEFAULT_REVISION_ENABLED = true;
 const DEFAULT_LLM_REVISION_ENABLED = false;
 const DEFAULT_LLM_REVISION_BUDGET = 999;
 const DEFAULT_MIN_REVISION_DELTA = 0.01;
+const DEFAULT_POLICY_DOUBT_THRESHOLD = 0.02;
 
-type QuestionMode = "coarse" | "local" | "late" | "none";
+type QuestionMode = "coarse" | "local" | "late" | "repair" | "none";
 type RevisionKind =
   | "coarse_roi_collapse"
   | "late_diffuse_reprobe"
   | "cluster_closeout_bias"
   | "reopen_local_probe"
-  | "confidence_collapse_reprobe";
+  | "confidence_collapse_reprobe"
+  | "abandon_exploit_mode"
+  | "force_disambiguation_question"
+  | "belief_repair_probe";
 
 interface RevisionPlan {
   revisionKind: RevisionKind;
@@ -53,6 +57,7 @@ interface AppliedRevisionMeta {
 }
 
 interface PolicyPreviewState {
+  policyMode: string;
   coarseBudget: number;
   localBudget: number;
   lateBudget: number;
@@ -67,6 +72,9 @@ interface RevisionPreviewValues {
   clusterCloseoutPreviewValue: number;
   reopenLocalProbePreviewValue: number;
   confidenceCollapseReprobePreviewValue: number;
+  abandonExploitPreviewValue: number;
+  forceDisambiguationPreviewValue: number;
+  beliefRepairProbePreviewValue: number;
 }
 
 abstract class ReflectiveStrategyBase implements Strategy {
@@ -82,6 +90,8 @@ abstract class ReflectiveStrategyBase implements Strategy {
     protected readonly llmRevisionBudget: number = DEFAULT_LLM_REVISION_BUDGET,
     protected readonly minRevisionDelta?: number,
     protected readonly allowLooseCoarseRevision: boolean = true,
+    protected readonly policyDoubtThreshold?: number,
+    protected readonly policyRepairEnabled: boolean = false,
   ) {}
 
   async decideTurn(ctx: TurnContext): Promise<TurnDecision> {
@@ -326,6 +336,26 @@ abstract class ReflectiveStrategyBase implements Strategy {
         this.allowLooseCoarseRevision,
       );
     }
+
+    const currentPolicyDoubtThreshold = asNumber(
+      ctx.bridge.data.policyDoubtThreshold,
+      DEFAULT_POLICY_DOUBT_THRESHOLD,
+    );
+    const nextPolicyDoubtThreshold = this.policyDoubtThreshold ?? currentPolicyDoubtThreshold;
+    const currentPolicyRepairEnabled = readBoolean(
+      ctx.bridge.data.policyRepairEnabled,
+      false,
+    );
+    if (
+      currentPolicyDoubtThreshold !== nextPolicyDoubtThreshold ||
+      currentPolicyRepairEnabled !== this.policyRepairEnabled
+    ) {
+      await ctx.bridge.dispatch(
+        "configurePolicyDoubt",
+        nextPolicyDoubtThreshold,
+        this.policyRepairEnabled,
+      );
+    }
   }
 
   protected async recordPrediction(
@@ -401,6 +431,13 @@ abstract class ReflectiveStrategyBase implements Strategy {
         reason: readString(ctx.bridge.data.lastRevisionReason) ?? null,
         bestRevisionKind: readString(ctx.bridge.computed.bestRevisionKind) ?? null,
         bestRevisionDelta: asNumber(ctx.bridge.computed.bestRevisionDelta, 0),
+        bestRepairKind: readString(ctx.bridge.computed.bestRepairKind) ?? null,
+        bestRepairDelta: asNumber(ctx.bridge.computed.bestRepairDelta, 0),
+        appliedRepairKind: readString(ctx.bridge.computed.appliedRepairKind) ?? null,
+        policyDoubt: ctx.bridge.computed.policyDoubt === true,
+        policyRepairRequested: ctx.bridge.computed.policyRepairRequested === true,
+        policyConfidence: asNumber(ctx.bridge.computed.policyConfidence, 0),
+        policyRegretEMA: asNumber(ctx.bridge.data.policyRegretEMA, 0),
         source: applied.source,
         usedLLM: applied.usedLLM,
         llmFallback: applied.fallback,
@@ -461,6 +498,33 @@ export class CRAStrategy extends ReflectiveStrategyBase {
       DEFAULT_LLM_REVISION_BUDGET,
       minRevisionDelta,
       false,
+    );
+  }
+}
+
+export class RMAStrategy extends ReflectiveStrategyBase {
+  readonly name = "rma";
+  readonly policyName = "reflective-model-repair-v1";
+
+  constructor(
+    candidateQuestions: number = 10,
+    confidenceThreshold?: number,
+    revisionCooldown?: number,
+    revisionEnabled: boolean = true,
+    minRevisionDelta: number = DEFAULT_MIN_REVISION_DELTA,
+    policyDoubtThreshold: number = DEFAULT_POLICY_DOUBT_THRESHOLD,
+  ) {
+    super(
+      candidateQuestions,
+      confidenceThreshold,
+      revisionCooldown,
+      revisionEnabled,
+      false,
+      DEFAULT_LLM_REVISION_BUDGET,
+      minRevisionDelta,
+      false,
+      policyDoubtThreshold,
+      true,
     );
   }
 }
@@ -665,6 +729,9 @@ async function recordRevisionPreview(
     preview.clusterCloseoutPreviewValue,
     preview.reopenLocalProbePreviewValue,
     preview.confidenceCollapseReprobePreviewValue,
+    preview.abandonExploitPreviewValue,
+    preview.forceDisambiguationPreviewValue,
+    preview.beliefRepairProbePreviewValue,
   );
 }
 
@@ -722,8 +789,9 @@ function buildRevisionPreviewValues(
       bestShoot,
       {
         ...current,
-        localBudget: current.localBudget + 1,
-        exploitThreshold: Math.max(0.45, current.exploitThreshold - 0.05),
+        localBudget: current.localBudget + 2,
+        salvageStartTurn: Math.max(12, current.salvageStartTurn - 1),
+        exploitThreshold: Math.max(0.45, current.exploitThreshold - 0.1),
       },
       candidateQuestions,
     ),
@@ -733,10 +801,51 @@ function buildRevisionPreviewValues(
       bestShoot,
       {
         ...current,
-        localBudget: current.localBudget + 1,
+        localBudget: current.localBudget + 2,
         lateBudget: current.lateBudget + 1,
-        salvageStartTurn: Math.max(12, current.salvageStartTurn - 1),
-        exploitThreshold: Math.max(0.4, current.exploitThreshold - 0.05),
+        salvageStartTurn: Math.max(12, current.salvageStartTurn - 2),
+        exploitThreshold: Math.max(0.4, current.exploitThreshold - 0.1),
+      },
+      candidateQuestions,
+    ),
+    abandonExploitPreviewValue: evaluatePolicyPreview(
+      ctx,
+      summary,
+      bestShoot,
+      {
+        ...current,
+        policyMode: "abandon-exploit",
+        localBudget: current.localBudget + 1,
+        salvageStartTurn: Math.max(12, current.salvageStartTurn - 2),
+        exploitThreshold: Math.max(0.35, current.exploitThreshold - 0.15),
+      },
+      candidateQuestions,
+    ),
+    forceDisambiguationPreviewValue: evaluatePolicyPreview(
+      ctx,
+      summary,
+      bestShoot,
+      {
+        ...current,
+        policyMode: "repair-disambiguation",
+        localBudget: current.localBudget + 2,
+        lateBudget: current.lateBudget + 1,
+        salvageStartTurn: Math.max(12, current.salvageStartTurn - 2),
+        exploitThreshold: Math.max(0.35, current.exploitThreshold - 0.15),
+      },
+      candidateQuestions,
+    ),
+    beliefRepairProbePreviewValue: evaluatePolicyPreview(
+      ctx,
+      summary,
+      bestShoot,
+      {
+        ...current,
+        policyMode: "belief-repair",
+        localBudget: current.localBudget + 2,
+        lateBudget: current.lateBudget + 2,
+        salvageStartTurn: Math.max(12, current.salvageStartTurn - 2),
+        exploitThreshold: Math.max(0.3, current.exploitThreshold - 0.2),
       },
       candidateQuestions,
     ),
@@ -771,8 +880,14 @@ function evaluatePolicyPreview(
     policy,
     candidateQuestions,
   );
+  const exploitFailureRelief = computeExploitFailureRelief(ctx, currentPolicy, policy);
+  const ambiguityReductionBonus = computeAmbiguityReductionBonus(
+    ctx,
+    questionMode,
+    bestQuestionValue,
+  );
 
-  return immediateActionValue + actionSpaceReopenBonus;
+  return immediateActionValue + actionSpaceReopenBonus + exploitFailureRelief + ambiguityReductionBonus;
 }
 
 function evaluateBestQuestionValueForMode(
@@ -840,11 +955,49 @@ function computeActionSpaceReopenBonus(
   return Math.max(0, reopenedQuestionValue - bestShoot.boardValue) * 0.5;
 }
 
+function computeExploitFailureRelief(
+  ctx: TurnContext,
+  currentPolicy: PolicyPreviewState,
+  nextPolicy: PolicyPreviewState,
+): number {
+  const highProbMissStreak = asNumber(ctx.bridge.data.recentHighProbMissStreak, 0);
+  const exploitLockStreak = asNumber(ctx.bridge.data.exploitLockStreak, 0);
+  if (highProbMissStreak <= 0 && exploitLockStreak <= 0) {
+    return 0;
+  }
+
+  const thresholdRelief = Math.max(0, currentPolicy.exploitThreshold - nextPolicy.exploitThreshold);
+  const repairModeBonus = nextPolicy.policyMode.startsWith("repair") || nextPolicy.policyMode === "abandon-exploit"
+    ? 0.03
+    : 0;
+
+  return thresholdRelief * (highProbMissStreak + Math.max(1, exploitLockStreak * 0.5)) + repairModeBonus;
+}
+
+function computeAmbiguityReductionBonus(
+  ctx: TurnContext,
+  questionMode: QuestionMode,
+  bestQuestionValue: number,
+): number {
+  if (questionMode !== "repair") {
+    return 0;
+  }
+  const recentQuestionFailureStreak = asNumber(ctx.bridge.data.recentQuestionFailureStreak, 0);
+  return bestQuestionValue * (0.2 + Math.min(0.2, recentQuestionFailureStreak * 0.05));
+}
+
 function deriveQuestionModeForPolicy(
   ctx: TurnContext,
   summary: WorldBeliefSummary,
   policy: PolicyPreviewState,
 ): QuestionMode {
+  if (
+    policy.policyMode === "abandon-exploit" ||
+    policy.policyMode === "repair-disambiguation" ||
+    policy.policyMode === "belief-repair"
+  ) {
+    return "repair";
+  }
   if (summary.largestHitClusterSize <= 0) return "coarse";
   return asNumber(ctx.bridge.data.turnNumber, 0) >= policy.salvageStartTurn && summary.frontierCount === 0
     ? "late"
@@ -865,6 +1018,10 @@ function isQuestionBudgetOpenForPolicy(
   if (mode === "late") {
     return asNumber(ctx.bridge.data.lateQuestionsUsed, 0) < policy.lateBudget;
   }
+  if (mode === "repair") {
+    return asNumber(ctx.bridge.data.localQuestionsUsed, 0) < policy.localBudget ||
+      asNumber(ctx.bridge.data.lateQuestionsUsed, 0) < policy.lateBudget;
+  }
   return false;
 }
 
@@ -873,6 +1030,7 @@ function readQuestionMode(ctx: TurnContext): QuestionMode {
     case "coarse":
     case "local":
     case "late":
+    case "repair":
       return ctx.bridge.computed.questionBudgetOpen === true
         ? readString(ctx.bridge.computed.questionFamilyMode)! as QuestionMode
         : "none";
@@ -888,11 +1046,13 @@ function selectQuestionsForMode(
   if (mode === "coarse") return selectCoarseQuestions(askedQuestions);
   if (mode === "local") return selectLocalQuestions(askedQuestions);
   if (mode === "late") return selectLateQuestions(askedQuestions);
+  if (mode === "repair") return selectRepairQuestions(askedQuestions);
   return [];
 }
 
 function readCurrentPolicyState(ctx: TurnContext): PolicyPreviewState {
   return {
+    policyMode: readString(ctx.bridge.data.policyMode) ?? "default",
     coarseBudget: asNumber(ctx.bridge.data.coarseBudget, 6),
     localBudget: asNumber(ctx.bridge.data.localBudget, 2),
     lateBudget: asNumber(ctx.bridge.data.lateBudget, 4),
@@ -927,9 +1087,24 @@ function selectLateQuestions(askedQuestions: Set<string>): QuestionDescriptor[] 
   });
 }
 
+function selectRepairQuestions(askedQuestions: Set<string>): QuestionDescriptor[] {
+  return getTemplateQuestions().filter((question) => {
+    const family = inferQuestionFamilyFromId(question.id);
+    const allowed = family === "row-band-2" ||
+      family === "column-band-2" ||
+      family === "block-2x2" ||
+      family === "row" ||
+      family === "column";
+    return allowed &&
+      !askedQuestions.has(question.id) &&
+      !askedQuestions.has(question.text);
+  });
+}
+
 function readRevisionPreview(ctx: TurnContext): RevisionPlan {
   return {
     revisionKind: readRevisionKind(
+      ctx.bridge.computed.nextAppliedKind ?? ctx.bridge.computed.bestRepairKind ??
       ctx.bridge.computed.bestRevisionKind ?? ctx.bridge.computed.nextRevisionKind,
     ) ?? "coarse_roi_collapse",
     policyMode: readString(ctx.bridge.computed.nextPolicyMode) ?? "default",
@@ -951,7 +1126,7 @@ function buildLLMRevisionSystemPrompt(): string {
   return [
     "Choose one reflective policy revision for Battleship.",
     "Return JSON only.",
-    'Schema: {"revisionKind":"coarse_roi_collapse|late_diffuse_reprobe|cluster_closeout_bias|reopen_local_probe|confidence_collapse_reprobe","coarseBudget":number,"localBudget":number,"lateBudget":number,"salvageStartTurn":number,"exploitThreshold":number,"policyMode":string}',
+    'Schema: {"revisionKind":"coarse_roi_collapse|late_diffuse_reprobe|cluster_closeout_bias|reopen_local_probe|confidence_collapse_reprobe|abandon_exploit_mode|force_disambiguation_question|belief_repair_probe","coarseBudget":number,"localBudget":number,"lateBudget":number,"salvageStartTurn":number,"exploitThreshold":number,"policyMode":string}',
     "If you omit a numeric field, the default symbolic preview will be used.",
     "Keep budgets non-negative and total budgets at or below 15.",
     "Keep exploitThreshold between 0 and 1.",
@@ -978,6 +1153,10 @@ function buildLLMRevisionUserPrompt(
       policyMode: snapshot.policyMode ?? null,
       questionFamilyMode: snapshot.questionFamilyMode ?? null,
       needRevision: snapshot.needRevision ?? null,
+      policyDoubt: snapshot.policyDoubt ?? null,
+      policyRepairRequested: snapshot.policyRepairRequested ?? null,
+      bestRepairKind: snapshot.bestRepairKind ?? null,
+      bestRepairDelta: snapshot.bestRepairDelta ?? null,
     },
     symbolicPreview: preview,
   };
@@ -1026,6 +1205,9 @@ function readRevisionKind(value: unknown): RevisionKind | null {
     case "cluster_closeout_bias":
     case "reopen_local_probe":
     case "confidence_collapse_reprobe":
+    case "abandon_exploit_mode":
+    case "force_disambiguation_question":
+    case "belief_repair_probe":
       return value;
     default:
       return null;

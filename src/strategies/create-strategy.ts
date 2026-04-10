@@ -4,7 +4,7 @@ import { BayesLLMStrategy, BayesStrategy, GreedyStrategy, RandomStrategy } from 
 import { MPStrategy } from "./mp-strategy.js";
 import { MStrategy } from "./m-strategy.js";
 import { MMPStrategy } from "./mmp-strategy.js";
-import { CRAStrategy, MRALLMStrategy, MRAStrategy } from "./mra/strategy.js";
+import { CRAStrategy, MRALLMStrategy, MRAStrategy, RMAStrategy } from "./mra/strategy.js";
 import {
   createLiteMMPPolicy,
   createMCMCMMPPolicy,
@@ -23,6 +23,7 @@ export type StrategyName =
   | "m"
   | "cra"
   | "mra"
+  | "rma"
   | "mra-llm"
   | "wma"
   | "wma-llm-salvage"
@@ -58,6 +59,7 @@ export interface StrategyFactoryOptions {
   revisionEnabled?: boolean;
   llmRevisionEnabled?: boolean;
   llmRevisionBudget?: number;
+  policyDoubtThreshold?: number;
 }
 
 export function createStrategy(
@@ -104,6 +106,15 @@ export function createStrategy(
         options.revisionCooldown,
         options.revisionEnabled ?? true,
         options.minRevisionDelta,
+      );
+    case "rma":
+      return new RMAStrategy(
+        candidateQuestions,
+        options.confidenceThreshold,
+        options.revisionCooldown,
+        options.revisionEnabled ?? true,
+        options.minRevisionDelta ?? 0.01,
+        options.policyDoubtThreshold ?? 0.02,
       );
     case "mra-llm":
       return new MRALLMStrategy(

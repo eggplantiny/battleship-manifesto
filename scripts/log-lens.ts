@@ -789,10 +789,17 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       recentQuestionFailureStreak: null,
       exploitLockStreak: null,
       modelConfidence: null,
+      policyConfidence: null,
+      policyRegretEMA: null,
+      policyStagnationStreak: null,
+      revisionFailureStreak: null,
       needRevision: null,
       sustainedLowConfidence: null,
+      policyDoubtThreshold: null,
       allowLooseCoarseRevision: null,
       policyMode: null,
+      lastAppliedPolicyMode: null,
+      lastAppliedPolicyValue: null,
       revisionReason: null,
       lastRevisionDelta: null,
       currentPolicyPreviewValue: null,
@@ -801,10 +808,26 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       clusterCloseoutPreviewValue: null,
       reopenLocalProbePreviewValue: null,
       confidenceCollapseReprobePreviewValue: null,
+      abandonExploitPreviewValue: null,
+      forceDisambiguationPreviewValue: null,
+      beliefRepairProbePreviewValue: null,
       reopenLocalProbeDelta: null,
       confidenceCollapseReprobeDelta: null,
+      abandonExploitDelta: null,
+      forceDisambiguationDelta: null,
+      beliefRepairProbeDelta: null,
       bestRevisionKind: null,
       bestRevisionDelta: null,
+      bestRepairKind: null,
+      bestRepairDelta: null,
+      bestAlternativeDelta: null,
+      counterfactualPolicyBeatingCurrent: null,
+      policyStagnating: null,
+      revisionNotHelping: null,
+      policyDoubtScore: null,
+      policyDoubt: null,
+      shouldAbandonExploitMode: null,
+      shouldRepairBelief: null,
       positiveRevisionPreview: null,
       coarseBudget: null,
       localBudget: null,
@@ -812,11 +835,17 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       salvageStartTurn: null,
       exploitThreshold: null,
       questionFamilyMode: null,
+      repairModeActive: null,
       questionBudgetOpen: null,
+      repairBudgetOpen: null,
       preferQuestion: null,
       preferExploitShot: null,
       nextRevisionKind: null,
+      nextAppliedKind: null,
+      nextAppliedDelta: null,
       revisionRequested: null,
+      policyRepairRequested: null,
+      appliedRepairKind: null,
       appliedRevisionSource: null,
       llmRevisionUsed: null,
       llmRevisionFallback: null,
@@ -831,20 +860,43 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       row.recentQuestionFailureStreak = asNullableNumber(readNested(event.snapshot, ["recentQuestionFailureStreak"])) ?? row.recentQuestionFailureStreak;
       row.exploitLockStreak = asNullableNumber(readNested(event.snapshot, ["exploitLockStreak"])) ?? row.exploitLockStreak;
       row.modelConfidence = asNullableNumber(readNested(event.snapshot, ["modelConfidence"])) ?? row.modelConfidence;
+      row.policyConfidence = asNullableNumber(readNested(event.snapshot, ["policyConfidence"])) ?? row.policyConfidence;
+      row.policyRegretEMA = asNullableNumber(readNested(event.snapshot, ["policyRegretEMA"])) ?? row.policyRegretEMA;
+      row.policyStagnationStreak = asNullableNumber(readNested(event.snapshot, ["policyStagnationStreak"])) ?? row.policyStagnationStreak;
+      row.revisionFailureStreak = asNullableNumber(readNested(event.snapshot, ["revisionFailureStreak"])) ?? row.revisionFailureStreak;
       row.needRevision = asBoolean(readNested(event.snapshot, ["needRevision"])) ?? row.needRevision;
       row.sustainedLowConfidence = asBoolean(readNested(event.snapshot, ["sustainedLowConfidence"])) ?? row.sustainedLowConfidence;
+      row.policyDoubtThreshold = asNullableNumber(readNested(event.snapshot, ["policyDoubtThreshold"])) ?? row.policyDoubtThreshold;
       row.allowLooseCoarseRevision = asBoolean(readNested(event.snapshot, ["allowLooseCoarseRevision"])) ?? row.allowLooseCoarseRevision;
       row.policyMode = asString(readNested(event.snapshot, ["policyMode"])) ?? row.policyMode;
+      row.lastAppliedPolicyMode = asString(readNested(event.snapshot, ["lastAppliedPolicyMode"])) ?? row.lastAppliedPolicyMode;
+      row.lastAppliedPolicyValue = asNullableNumber(readNested(event.snapshot, ["lastAppliedPolicyValue"])) ?? row.lastAppliedPolicyValue;
       row.currentPolicyPreviewValue = asNullableNumber(readNested(event.snapshot, ["currentPolicyPreviewValue"])) ?? row.currentPolicyPreviewValue;
       row.coarseCollapsePreviewValue = asNullableNumber(readNested(event.snapshot, ["coarseCollapsePreviewValue"])) ?? row.coarseCollapsePreviewValue;
       row.lateDiffusePreviewValue = asNullableNumber(readNested(event.snapshot, ["lateDiffusePreviewValue"])) ?? row.lateDiffusePreviewValue;
       row.clusterCloseoutPreviewValue = asNullableNumber(readNested(event.snapshot, ["clusterCloseoutPreviewValue"])) ?? row.clusterCloseoutPreviewValue;
       row.reopenLocalProbePreviewValue = asNullableNumber(readNested(event.snapshot, ["reopenLocalProbePreviewValue"])) ?? row.reopenLocalProbePreviewValue;
       row.confidenceCollapseReprobePreviewValue = asNullableNumber(readNested(event.snapshot, ["confidenceCollapseReprobePreviewValue"])) ?? row.confidenceCollapseReprobePreviewValue;
+      row.abandonExploitPreviewValue = asNullableNumber(readNested(event.snapshot, ["abandonExploitPreviewValue"])) ?? row.abandonExploitPreviewValue;
+      row.forceDisambiguationPreviewValue = asNullableNumber(readNested(event.snapshot, ["forceDisambiguationPreviewValue"])) ?? row.forceDisambiguationPreviewValue;
+      row.beliefRepairProbePreviewValue = asNullableNumber(readNested(event.snapshot, ["beliefRepairProbePreviewValue"])) ?? row.beliefRepairProbePreviewValue;
       row.reopenLocalProbeDelta = asNullableNumber(readNested(event.snapshot, ["reopenLocalProbeDelta"])) ?? row.reopenLocalProbeDelta;
       row.confidenceCollapseReprobeDelta = asNullableNumber(readNested(event.snapshot, ["confidenceCollapseReprobeDelta"])) ?? row.confidenceCollapseReprobeDelta;
+      row.abandonExploitDelta = asNullableNumber(readNested(event.snapshot, ["abandonExploitDelta"])) ?? row.abandonExploitDelta;
+      row.forceDisambiguationDelta = asNullableNumber(readNested(event.snapshot, ["forceDisambiguationDelta"])) ?? row.forceDisambiguationDelta;
+      row.beliefRepairProbeDelta = asNullableNumber(readNested(event.snapshot, ["beliefRepairProbeDelta"])) ?? row.beliefRepairProbeDelta;
       row.bestRevisionKind = asString(readNested(event.snapshot, ["bestRevisionKind"])) ?? row.bestRevisionKind;
       row.bestRevisionDelta = asNullableNumber(readNested(event.snapshot, ["bestRevisionDelta"])) ?? row.bestRevisionDelta;
+      row.bestRepairKind = asString(readNested(event.snapshot, ["bestRepairKind"])) ?? row.bestRepairKind;
+      row.bestRepairDelta = asNullableNumber(readNested(event.snapshot, ["bestRepairDelta"])) ?? row.bestRepairDelta;
+      row.bestAlternativeDelta = asNullableNumber(readNested(event.snapshot, ["bestAlternativeDelta"])) ?? row.bestAlternativeDelta;
+      row.counterfactualPolicyBeatingCurrent = asBoolean(readNested(event.snapshot, ["counterfactualPolicyBeatingCurrent"])) ?? row.counterfactualPolicyBeatingCurrent;
+      row.policyStagnating = asBoolean(readNested(event.snapshot, ["policyStagnating"])) ?? row.policyStagnating;
+      row.revisionNotHelping = asBoolean(readNested(event.snapshot, ["revisionNotHelping"])) ?? row.revisionNotHelping;
+      row.policyDoubtScore = asNullableNumber(readNested(event.snapshot, ["policyDoubtScore"])) ?? row.policyDoubtScore;
+      row.policyDoubt = asBoolean(readNested(event.snapshot, ["policyDoubt"])) ?? row.policyDoubt;
+      row.shouldAbandonExploitMode = asBoolean(readNested(event.snapshot, ["shouldAbandonExploitMode"])) ?? row.shouldAbandonExploitMode;
+      row.shouldRepairBelief = asBoolean(readNested(event.snapshot, ["shouldRepairBelief"])) ?? row.shouldRepairBelief;
       row.positiveRevisionPreview = asBoolean(readNested(event.snapshot, ["positiveRevisionPreview"])) ?? row.positiveRevisionPreview;
       row.coarseBudget = asNullableNumber(readNested(event.snapshot, ["coarseBudget"])) ?? row.coarseBudget;
       row.localBudget = asNullableNumber(readNested(event.snapshot, ["localBudget"])) ?? row.localBudget;
@@ -852,11 +904,17 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       row.salvageStartTurn = asNullableNumber(readNested(event.snapshot, ["salvageStartTurn"])) ?? row.salvageStartTurn;
       row.exploitThreshold = asNullableNumber(readNested(event.snapshot, ["exploitThreshold"])) ?? row.exploitThreshold;
       row.questionFamilyMode = asString(readNested(event.snapshot, ["questionFamilyMode"])) ?? row.questionFamilyMode;
+      row.repairModeActive = asBoolean(readNested(event.snapshot, ["repairModeActive"])) ?? row.repairModeActive;
       row.questionBudgetOpen = asBoolean(readNested(event.snapshot, ["questionBudgetOpen"])) ?? row.questionBudgetOpen;
+      row.repairBudgetOpen = asBoolean(readNested(event.snapshot, ["repairBudgetOpen"])) ?? row.repairBudgetOpen;
       row.preferQuestion = asBoolean(readNested(event.snapshot, ["preferQuestion"])) ?? row.preferQuestion;
       row.preferExploitShot = asBoolean(readNested(event.snapshot, ["preferExploitShot"])) ?? row.preferExploitShot;
       row.nextRevisionKind = asString(readNested(event.snapshot, ["nextRevisionKind"])) ?? row.nextRevisionKind;
+      row.nextAppliedKind = asString(readNested(event.snapshot, ["nextAppliedKind"])) ?? row.nextAppliedKind;
+      row.nextAppliedDelta = asNullableNumber(readNested(event.snapshot, ["nextAppliedDelta"])) ?? row.nextAppliedDelta;
       row.revisionRequested = asBoolean(readNested(event.snapshot, ["revisionRequested"])) ?? row.revisionRequested;
+      row.policyRepairRequested = asBoolean(readNested(event.snapshot, ["policyRepairRequested"])) ?? row.policyRepairRequested;
+      row.appliedRepairKind = asString(readNested(event.snapshot, ["appliedRepairKind"])) ?? row.appliedRepairKind;
     }
 
     if (event.type === "reflective_prediction" && isRecord(event.data)) {
@@ -881,6 +939,13 @@ function buildConfidenceLens(events: EventRow[]): Array<Record<string, unknown>>
       row.llmRevisionFallback = asBoolean(event.data.llmFallback) ?? null;
       row.bestRevisionKind = asString(event.data.bestRevisionKind) ?? row.bestRevisionKind;
       row.bestRevisionDelta = asNullableNumber(event.data.bestRevisionDelta) ?? row.bestRevisionDelta;
+      row.bestRepairKind = asString(event.data.bestRepairKind) ?? row.bestRepairKind;
+      row.bestRepairDelta = asNullableNumber(event.data.bestRepairDelta) ?? row.bestRepairDelta;
+      row.appliedRepairKind = asString(event.data.appliedRepairKind) ?? row.appliedRepairKind;
+      row.policyDoubt = asBoolean(event.data.policyDoubt) ?? row.policyDoubt;
+      row.policyRepairRequested = asBoolean(event.data.policyRepairRequested) ?? row.policyRepairRequested;
+      row.policyConfidence = asNullableNumber(event.data.policyConfidence) ?? row.policyConfidence;
+      row.policyRegretEMA = asNullableNumber(event.data.policyRegretEMA) ?? row.policyRegretEMA;
       row.policyMode = asString(event.data.policyMode) ?? row.policyMode;
       row.lastRevisionDelta = asNullableNumber(event.data.lastRevisionDelta) ?? row.lastRevisionDelta;
       row.coarseBudget = asNullableNumber(event.data.coarseBudget) ?? row.coarseBudget;

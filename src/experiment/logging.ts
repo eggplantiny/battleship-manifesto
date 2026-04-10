@@ -116,15 +116,21 @@ export interface SnapshotSummary {
   recentQuestionFailureStreak?: number;
   exploitLockStreak?: number;
   modelConfidence?: number;
+  policyConfidence?: number;
+  policyRegretEMA?: number;
+  policyStagnationStreak?: number;
+  revisionFailureStreak?: number;
   needRevision?: boolean;
   canRevisePolicy?: boolean;
   shouldRevisePolicy?: boolean;
   confidenceThreshold?: number;
   minRevisionDelta?: number;
+  policyDoubtThreshold?: number;
   allowLooseCoarseRevision?: boolean;
   revisionCooldownTurns?: number;
   revisionCooldownRemaining?: number;
   revisionEnabled?: boolean;
+  policyRepairEnabled?: boolean;
   llmRevisionEnabled?: boolean;
   llmRevisionBudget?: number;
   llmRevisionCount?: number;
@@ -132,6 +138,8 @@ export interface SnapshotSummary {
   llmRevisionAvailable?: boolean;
   revisionCount?: number;
   policyMode?: string;
+  lastAppliedPolicyMode?: string;
+  lastAppliedPolicyValue?: number;
   lastRevisionReason?: string;
   lastRevisionSource?: string;
   lastRevisionDelta?: number;
@@ -142,10 +150,12 @@ export interface SnapshotSummary {
   salvageStartTurn?: number;
   exploitThreshold?: number;
   questionFamilyMode?: string;
+  repairModeActive?: boolean;
   questionBudgetOpen?: boolean;
   coarseBudgetOpen?: boolean;
   localBudgetOpen?: boolean;
   lateBudgetOpen?: boolean;
+  repairBudgetOpen?: boolean;
   frontierExploitForced?: boolean;
   questionCandidateAvailable?: boolean;
   questionOutvaluesShot?: boolean;
@@ -160,16 +170,34 @@ export interface SnapshotSummary {
   clusterCloseoutPreviewValue?: number;
   reopenLocalProbePreviewValue?: number;
   confidenceCollapseReprobePreviewValue?: number;
+  abandonExploitPreviewValue?: number;
+  forceDisambiguationPreviewValue?: number;
+  beliefRepairProbePreviewValue?: number;
   sustainedLowConfidence?: boolean;
   coarseCollapseDelta?: number;
   lateDiffuseDelta?: number;
   clusterCloseoutDelta?: number;
   reopenLocalProbeDelta?: number;
   confidenceCollapseReprobeDelta?: number;
+  abandonExploitDelta?: number;
+  forceDisambiguationDelta?: number;
+  beliefRepairProbeDelta?: number;
   bestRevisionKind?: string;
   bestRevisionDelta?: number;
+  bestRepairKind?: string;
+  bestRepairDelta?: number;
+  bestAlternativeDelta?: number;
+  counterfactualPolicyBeatingCurrent?: boolean;
+  policyStagnating?: boolean;
+  revisionNotHelping?: boolean;
+  policyDoubtScore?: number;
+  policyDoubt?: boolean;
+  shouldAbandonExploitMode?: boolean;
+  shouldRepairBelief?: boolean;
   positiveRevisionPreview?: boolean;
   nextRevisionKind?: string;
+  nextAppliedKind?: string;
+  nextAppliedDelta?: number;
   nextPolicyMode?: string;
   nextCoarseBudget?: number;
   nextLocalBudget?: number;
@@ -177,6 +205,8 @@ export interface SnapshotSummary {
   nextSalvageStartTurn?: number;
   nextExploitThreshold?: number;
   revisionRequested?: boolean;
+  policyRepairRequested?: boolean;
+  appliedRepairKind?: string;
 }
 
 export interface GameLogMeta {
@@ -387,15 +417,21 @@ export function summarizeSnapshot(
     recentQuestionFailureStreak: readNumber(data.recentQuestionFailureStreak),
     exploitLockStreak: readNumber(data.exploitLockStreak),
     modelConfidence: readNumber(computed.modelConfidence),
+    policyConfidence: readNumber(computed.policyConfidence),
+    policyRegretEMA: readNumber(data.policyRegretEMA),
+    policyStagnationStreak: readNumber(data.policyStagnationStreak),
+    revisionFailureStreak: readNumber(data.revisionFailureStreak),
     needRevision: readBoolean(computed.needRevision),
     canRevisePolicy: readBoolean(computed.canRevisePolicy),
     shouldRevisePolicy: readBoolean(computed.shouldRevisePolicy),
     confidenceThreshold: readNumber(data.confidenceThreshold),
     minRevisionDelta: readNumber(data.minRevisionDelta),
+    policyDoubtThreshold: readNumber(data.policyDoubtThreshold),
     allowLooseCoarseRevision: readBoolean(data.allowLooseCoarseRevision),
     revisionCooldownTurns: readNumber(data.revisionCooldownTurns),
     revisionCooldownRemaining: readNumber(data.revisionCooldownRemaining),
     revisionEnabled: readBoolean(data.revisionEnabled),
+    policyRepairEnabled: readBoolean(data.policyRepairEnabled),
     llmRevisionEnabled: readBoolean(data.llmRevisionEnabled),
     llmRevisionBudget: readNumber(data.llmRevisionBudget),
     llmRevisionCount: readNumber(data.llmRevisionCount),
@@ -403,6 +439,8 @@ export function summarizeSnapshot(
     llmRevisionAvailable: readBoolean(computed.llmRevisionAvailable),
     revisionCount: readNumber(data.revisionCount),
     policyMode: readString(data.policyMode),
+    lastAppliedPolicyMode: readString(data.lastAppliedPolicyMode),
+    lastAppliedPolicyValue: readNumber(data.lastAppliedPolicyValue),
     lastRevisionReason: readString(data.lastRevisionReason),
     lastRevisionSource: readString(data.lastRevisionSource),
     lastRevisionDelta: readNumber(data.lastRevisionDelta),
@@ -413,10 +451,12 @@ export function summarizeSnapshot(
     salvageStartTurn: readNumber(data.salvageStartTurn),
     exploitThreshold: readNumber(data.exploitThreshold),
     questionFamilyMode: readString(computed.questionFamilyMode),
+    repairModeActive: readBoolean(computed.repairModeActive),
     questionBudgetOpen: readBoolean(computed.questionBudgetOpen),
     coarseBudgetOpen: readBoolean(computed.coarseBudgetOpen),
     localBudgetOpen: readBoolean(computed.localBudgetOpen),
     lateBudgetOpen: readBoolean(computed.lateBudgetOpen),
+    repairBudgetOpen: readBoolean(computed.repairBudgetOpen),
     frontierExploitForced: readBoolean(computed.frontierExploitForced),
     questionCandidateAvailable: readBoolean(computed.questionCandidateAvailable),
     questionOutvaluesShot: readBoolean(computed.questionOutvaluesShot),
@@ -431,16 +471,34 @@ export function summarizeSnapshot(
     clusterCloseoutPreviewValue: readNumber(data.clusterCloseoutPreviewValue),
     reopenLocalProbePreviewValue: readNumber(data.reopenLocalProbePreviewValue),
     confidenceCollapseReprobePreviewValue: readNumber(data.confidenceCollapseReprobePreviewValue),
+    abandonExploitPreviewValue: readNumber(data.abandonExploitPreviewValue),
+    forceDisambiguationPreviewValue: readNumber(data.forceDisambiguationPreviewValue),
+    beliefRepairProbePreviewValue: readNumber(data.beliefRepairProbePreviewValue),
     sustainedLowConfidence: readBoolean(computed.sustainedLowConfidence),
     coarseCollapseDelta: readNumber(computed.coarseCollapseDelta),
     lateDiffuseDelta: readNumber(computed.lateDiffuseDelta),
     clusterCloseoutDelta: readNumber(computed.clusterCloseoutDelta),
     reopenLocalProbeDelta: readNumber(computed.reopenLocalProbeDelta),
     confidenceCollapseReprobeDelta: readNumber(computed.confidenceCollapseReprobeDelta),
+    abandonExploitDelta: readNumber(computed.abandonExploitDelta),
+    forceDisambiguationDelta: readNumber(computed.forceDisambiguationDelta),
+    beliefRepairProbeDelta: readNumber(computed.beliefRepairProbeDelta),
     bestRevisionKind: readString(computed.bestRevisionKind),
     bestRevisionDelta: readNumber(computed.bestRevisionDelta),
+    bestRepairKind: readString(computed.bestRepairKind),
+    bestRepairDelta: readNumber(computed.bestRepairDelta),
+    bestAlternativeDelta: readNumber(computed.bestAlternativeDelta),
+    counterfactualPolicyBeatingCurrent: readBoolean(computed.counterfactualPolicyBeatingCurrent),
+    policyStagnating: readBoolean(computed.policyStagnating),
+    revisionNotHelping: readBoolean(computed.revisionNotHelping),
+    policyDoubtScore: readNumber(computed.policyDoubtScore),
+    policyDoubt: readBoolean(computed.policyDoubt),
+    shouldAbandonExploitMode: readBoolean(computed.shouldAbandonExploitMode),
+    shouldRepairBelief: readBoolean(computed.shouldRepairBelief),
     positiveRevisionPreview: readBoolean(computed.positiveRevisionPreview),
     nextRevisionKind: readString(computed.nextRevisionKind),
+    nextAppliedKind: readString(computed.nextAppliedKind),
+    nextAppliedDelta: readNumber(computed.nextAppliedDelta),
     nextPolicyMode: readString(computed.nextPolicyMode),
     nextCoarseBudget: readNumber(computed.nextCoarseBudget),
     nextLocalBudget: readNumber(computed.nextLocalBudget),
@@ -448,6 +506,8 @@ export function summarizeSnapshot(
     nextSalvageStartTurn: readNumber(computed.nextSalvageStartTurn),
     nextExploitThreshold: readNumber(computed.nextExploitThreshold),
     revisionRequested: readBoolean(computed.revisionRequested),
+    policyRepairRequested: readBoolean(computed.policyRepairRequested),
+    appliedRepairKind: readString(computed.appliedRepairKind),
   };
 }
 

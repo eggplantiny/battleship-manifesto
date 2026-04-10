@@ -1,6 +1,8 @@
-# How To Run
+# How To Run Experiments
 
-## Install
+This guide is the reproduction path for external readers who want to run the public Battleship experiments from this repository.
+
+## 1. Install
 
 This repo is currently tested with Node.js `25.9.0`.
 
@@ -24,34 +26,36 @@ npx pnpm@10.33.0 install
 npx pnpm@10.33.0 check
 ```
 
-## One-board smoke
+## 2. Start with a no-LLM smoke test
+
+This is the fastest way to confirm that the repo runs end to end:
 
 ```bash
 pnpm run exp:run -- --strategy mra --revision-enabled true --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label smoke-mra-b17
 ```
 
-## LLM provider configuration
+That command writes a run directory under `results/runs/`.
 
-Defaults:
+## 3. Inspect the run with the lens
 
-- provider: `ollama`
-- Ollama URL: `OLLAMA_BASE_URL` or `http://localhost:11434`
-- OpenAI URL: `OPENAI_BASE_URL` or `https://api.openai.com/v1`
-- OpenAI key: `OPENAI_API_KEY`
-
-Use local or remote Ollama:
+Use the repository-standard lens rather than raw logs:
 
 ```bash
-OLLAMA_BASE_URL=http://host.docker.internal:11434 pnpm run exp:run -- --strategy wma-llm-salvage --decision-model gemma4:e4b --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label wma-ollama-b17
+pnpm run log:lens -- --view run --run latest
+pnpm run log:lens -- --view confidence --run latest --game B17-seed0
 ```
 
-Use OpenAI for the revision path:
+The policy in `AGENTS.md` is to use `log:lens` first for run analysis.
 
-```bash
-OPENAI_API_KEY=... pnpm run exp:run -- --strategy mra-llm --llm-provider openai --decision-provider openai --decision-model gpt-4o-mini --confidence-threshold 1.0 --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label mra-openai-b17
-```
+## 4. Run the public comparison suite
 
-## Common runs
+These commands use the public paper-like setup that is pinned in the docs:
+
+- all boards
+- 3 seeds
+- `protocol paper`
+- `belief mcmc`
+- `particles 500`
 
 Greedy baseline:
 
@@ -77,8 +81,39 @@ Counterfactual reflective baseline:
 pnpm run exp:run -- --strategy cra --revision-enabled true --min-revision-delta 0.01 --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label cra-all3
 ```
 
-Reflective agent with sparse LLM revision:
+## 5. Compare runs
+
+Use the compare view to line up a primary run against a baseline:
 
 ```bash
-pnpm run exp:run -- --strategy mra-llm --decision-model gemma4:e4b --model gemma4:e4b --confidence-threshold 1.0 --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label mra-llm-all3
+pnpm run log:lens -- --view compare --run <primary-run> --compare-run <baseline-run>
 ```
+
+## 6. Understand runner defaults
+
+The CLI itself defaults to `--protocol paper`, which means:
+
+- all boards
+- 3 seeds
+- 500 particles
+- `smc` belief
+- `epsilon 0.1`
+
+The public commands in this repo pin `--belief mcmc --particles 500` explicitly so readers can rerun the documented setup without guessing.
+
+## 7. Build the demo app
+
+If you also want the browser demo:
+
+```bash
+pnpm build
+```
+
+## 8. If you want LLM-backed strategies
+
+Use [docs/llm-setup.md](./llm-setup.md) for:
+
+- `ollama` setup
+- `openai` setup
+- role-specific flags such as `--decision-provider`
+- provider extension points in code

@@ -34,6 +34,9 @@ domain BattleshipReflective {
     clusterCloseoutPreviewValue: number = 0
     reopenLocalProbePreviewValue: number = 0
     confidenceCollapseReprobePreviewValue: number = 0
+    abandonExploitPreviewValue: number = 0
+    forceDisambiguationPreviewValue: number = 0
+    beliefRepairProbePreviewValue: number = 0
     coarseQuestionsUsed: number = 0
     localQuestionsUsed: number = 0
     lateQuestionsUsed: number = 0
@@ -51,17 +54,24 @@ domain BattleshipReflective {
     recentHighProbMissStreak: number = 0
     recentQuestionFailureStreak: number = 0
     exploitLockStreak: number = 0
+    policyRegretEMA: number = 0
+    policyStagnationStreak: number = 0
+    revisionFailureStreak: number = 0
     confidenceThreshold: number = 0.72
     minRevisionDelta: number = 0.01
+    policyDoubtThreshold: number = 0.02
     allowLooseCoarseRevision: boolean = true
     revisionCooldownTurns: number = 3
     revisionCooldownRemaining: number = 0
     revisionEnabled: boolean = true
+    policyRepairEnabled: boolean = false
     llmRevisionEnabled: boolean = false
     llmRevisionBudget: number = 999
     llmRevisionCount: number = 0
     revisionCount: number = 0
     policyMode: string = "default"
+    lastAppliedPolicyMode: string = "default"
+    lastAppliedPolicyValue: number = 0
     lastRevisionReason: string = ""
     lastRevisionSource: string = ""
     lastRevisionDelta: number = 0
@@ -93,6 +103,8 @@ domain BattleshipReflective {
 
   computed modelConfidenceRaw = sub(1, div(add(predictionErrorEMA, calibrationErrorEMA), 2))
   computed modelConfidence = cond(gt(modelConfidenceRaw, 0), modelConfidenceRaw, 0)
+  computed policyConfidenceRaw = sub(1, policyRegretEMA)
+  computed policyConfidence = cond(gt(policyConfidenceRaw, 0), policyConfidenceRaw, 0)
   computed confident = gte(modelConfidence, confidenceThreshold)
   computed needRevision = not(confident)
   computed canRevisePolicy = and(needRevision, eq(revisionCooldownRemaining, 0))
@@ -107,14 +119,23 @@ domain BattleshipReflective {
     "coarse",
     cond(lateSalvagePhase, "late", "local")
   )
-  computed questionFamilyMode = currentQuestionBucket
+  computed repairModeActive = or(
+    eq(policyMode, "abandon-exploit"),
+    or(eq(policyMode, "repair-disambiguation"), eq(policyMode, "belief-repair"))
+  )
+  computed questionFamilyMode = cond(repairModeActive, "repair", currentQuestionBucket)
   computed coarseBudgetOpen = lt(coarseQuestionsUsed, coarseBudget)
   computed localBudgetOpen = lt(localQuestionsUsed, localBudget)
   computed lateBudgetOpen = lt(lateQuestionsUsed, lateBudget)
+  computed repairBudgetOpen = or(localBudgetOpen, lateBudgetOpen)
   computed questionBudgetOpen = cond(
     eq(questionFamilyMode, "coarse"),
     coarseBudgetOpen,
-    cond(eq(questionFamilyMode, "late"), lateBudgetOpen, localBudgetOpen)
+    cond(
+      eq(questionFamilyMode, "late"),
+      lateBudgetOpen,
+      cond(eq(questionFamilyMode, "repair"), repairBudgetOpen, localBudgetOpen)
+    )
   )
   computed frontierExploitForced = gte(bestHitProb, exploitThreshold)
   computed questionCandidateAvailable = neq(bestQuestionId, "")
@@ -148,6 +169,9 @@ domain BattleshipReflective {
   computed clusterCloseoutDelta = sub(clusterCloseoutPreviewValue, currentPolicyPreviewValue)
   computed reopenLocalProbeDelta = sub(reopenLocalProbePreviewValue, currentPolicyPreviewValue)
   computed confidenceCollapseReprobeDelta = sub(confidenceCollapseReprobePreviewValue, currentPolicyPreviewValue)
+  computed abandonExploitDelta = sub(abandonExploitPreviewValue, currentPolicyPreviewValue)
+  computed forceDisambiguationDelta = sub(forceDisambiguationPreviewValue, currentPolicyPreviewValue)
+  computed beliefRepairProbeDelta = sub(beliefRepairProbePreviewValue, currentPolicyPreviewValue)
   computed totalQuestionBudget = add(add(coarseBudget, localBudget), lateBudget)
   computed coarseCollapseCandidate = and(
     coarseRoiCollapsed,
@@ -238,82 +262,212 @@ domain BattleshipReflective {
       )
     )
   )
+  computed abandonExploitCandidate = and(
+    and(policyRepairEnabled, preferExploitShot),
+    and(gte(exploitLockStreak, 2), gt(abandonExploitDelta, minRevisionDelta))
+  )
+  computed forceDisambiguationCandidate = and(
+    policyRepairEnabled,
+    and(
+      and(gte(recentQuestionFailureStreak, 2), questionCandidateAvailable),
+      and(lte(totalQuestionBudget, 12), gt(forceDisambiguationDelta, minRevisionDelta))
+    )
+  )
+  computed beliefRepairProbeCandidate = and(
+    policyRepairEnabled,
+    and(
+      and(or(gte(recentHighProbMissStreak, 2), gte(exploitLockStreak, 3)), sustainedLowConfidence),
+      and(lte(totalQuestionBudget, 11), gt(beliefRepairProbeDelta, minRevisionDelta))
+    )
+  )
+  computed bestRepairKind = cond(
+    and(
+      abandonExploitCandidate,
+      and(
+        or(not(forceDisambiguationCandidate), gte(abandonExploitDelta, forceDisambiguationDelta)),
+        or(not(beliefRepairProbeCandidate), gte(abandonExploitDelta, beliefRepairProbeDelta))
+      )
+    ),
+    "abandon_exploit_mode",
+    cond(
+      and(
+        forceDisambiguationCandidate,
+        or(not(beliefRepairProbeCandidate), gte(forceDisambiguationDelta, beliefRepairProbeDelta))
+      ),
+      "force_disambiguation_question",
+      cond(beliefRepairProbeCandidate, "belief_repair_probe", "")
+    )
+  )
+  computed bestRepairDelta = cond(
+    eq(bestRepairKind, "abandon_exploit_mode"),
+    abandonExploitDelta,
+    cond(
+      eq(bestRepairKind, "force_disambiguation_question"),
+      forceDisambiguationDelta,
+      cond(eq(bestRepairKind, "belief_repair_probe"), beliefRepairProbeDelta, 0)
+    )
+  )
+  computed bestAlternativeDelta = cond(
+    gt(bestRepairDelta, bestRevisionDelta),
+    bestRepairDelta,
+    bestRevisionDelta
+  )
+  computed counterfactualPolicyBeatingCurrent = gt(bestAlternativeDelta, policyDoubtThreshold)
+  computed policyStagnating = gte(policyStagnationStreak, 3)
+  computed revisionNotHelping = gte(revisionFailureStreak, 2)
+  computed policyDoubtScore = add(
+    policyRegretEMA,
+    div(add(policyStagnationStreak, revisionFailureStreak), 10)
+  )
+  computed policyDoubt = and(
+    policyRepairEnabled,
+    and(
+      gte(policyDoubtScore, policyDoubtThreshold),
+      or(
+        counterfactualPolicyBeatingCurrent,
+        or(policyStagnating, or(revisionNotHelping, gte(recentHighProbMissStreak, 2)))
+      )
+    )
+  )
+  computed shouldAbandonExploitMode = and(policyDoubt, preferExploitShot)
+  computed shouldRepairBelief = and(
+    policyDoubt,
+    or(shouldAbandonExploitMode, or(gte(recentQuestionFailureStreak, 2), gte(recentHighProbMissStreak, 2)))
+  )
   computed positiveRevisionPreview = or(
     gt(bestRevisionDelta, minRevisionDelta),
     and(eq(bestRevisionKind, "coarse_roi_collapse"), coarseCollapseCandidate)
   )
   computed nextRevisionKind = bestRevisionKind
+  computed policyRepairRequested = and(
+    canRevisePolicy,
+    and(shouldRepairBelief, neq(bestRepairKind, ""))
+  )
+  computed nextAppliedKind = cond(policyRepairRequested, bestRepairKind, bestRevisionKind)
+  computed nextAppliedDelta = cond(policyRepairRequested, bestRepairDelta, bestRevisionDelta)
   computed nextPolicyMode = cond(
-    eq(bestRevisionKind, "coarse_roi_collapse"),
+    eq(nextAppliedKind, "coarse_roi_collapse"),
     "coarse-reduced",
     cond(
-      eq(bestRevisionKind, "late_diffuse_reprobe"),
+      eq(nextAppliedKind, "late_diffuse_reprobe"),
       "late-reprobe",
       cond(
-        eq(bestRevisionKind, "cluster_closeout_bias"),
+        eq(nextAppliedKind, "cluster_closeout_bias"),
         "closeout",
         cond(
-          eq(bestRevisionKind, "reopen_local_probe"),
+          eq(nextAppliedKind, "reopen_local_probe"),
           "local-reprobe",
-          cond(eq(bestRevisionKind, "confidence_collapse_reprobe"), "collapse-reprobe", policyMode)
+          cond(
+            eq(nextAppliedKind, "confidence_collapse_reprobe"),
+            "collapse-reprobe",
+            cond(
+              eq(nextAppliedKind, "abandon_exploit_mode"),
+              "abandon-exploit",
+              cond(
+                eq(nextAppliedKind, "force_disambiguation_question"),
+                "repair-disambiguation",
+                cond(eq(nextAppliedKind, "belief_repair_probe"), "belief-repair", policyMode)
+              )
+            )
+          )
         )
       )
     )
   )
   computed nextCoarseBudget = cond(
-    eq(bestRevisionKind, "coarse_roi_collapse"),
+    eq(nextAppliedKind, "coarse_roi_collapse"),
     sub(coarseBudget, 1),
     coarseBudget
   )
   computed nextLocalBudget = cond(
-    eq(bestRevisionKind, "coarse_roi_collapse"),
+    eq(nextAppliedKind, "coarse_roi_collapse"),
     add(localBudget, 1),
     cond(
-      eq(bestRevisionKind, "late_diffuse_reprobe"),
+      eq(nextAppliedKind, "late_diffuse_reprobe"),
       cond(gt(localBudget, 0), sub(localBudget, 1), 0),
       cond(
-        eq(bestRevisionKind, "reopen_local_probe"),
-        add(localBudget, 1),
+        eq(nextAppliedKind, "reopen_local_probe"),
+        add(localBudget, 2),
         cond(
-          eq(bestRevisionKind, "confidence_collapse_reprobe"),
-          add(localBudget, 1),
-          localBudget
+          eq(nextAppliedKind, "confidence_collapse_reprobe"),
+          add(localBudget, 2),
+          cond(
+            eq(nextAppliedKind, "abandon_exploit_mode"),
+            add(localBudget, 1),
+            cond(
+              eq(nextAppliedKind, "force_disambiguation_question"),
+              add(localBudget, 2),
+              cond(eq(nextAppliedKind, "belief_repair_probe"), add(localBudget, 2), localBudget)
+            )
+          )
         )
       )
     )
   )
   computed nextLateBudget = cond(
-    eq(bestRevisionKind, "late_diffuse_reprobe"),
+    eq(nextAppliedKind, "late_diffuse_reprobe"),
     add(lateBudget, 1),
     cond(
-      eq(bestRevisionKind, "confidence_collapse_reprobe"),
+      eq(nextAppliedKind, "confidence_collapse_reprobe"),
       add(lateBudget, 1),
-      lateBudget
+      cond(
+        eq(nextAppliedKind, "force_disambiguation_question"),
+        add(lateBudget, 1),
+        cond(eq(nextAppliedKind, "belief_repair_probe"), add(lateBudget, 2), lateBudget)
+      )
     )
   )
   computed nextSalvageStartTurn = cond(
-    eq(bestRevisionKind, "late_diffuse_reprobe"),
+    eq(nextAppliedKind, "late_diffuse_reprobe"),
     cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
     cond(
-      eq(bestRevisionKind, "cluster_closeout_bias"),
+      eq(nextAppliedKind, "cluster_closeout_bias"),
       cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
       cond(
-        eq(bestRevisionKind, "confidence_collapse_reprobe"),
+        eq(nextAppliedKind, "reopen_local_probe"),
         cond(gt(salvageStartTurn, 12), sub(salvageStartTurn, 1), 12),
-        salvageStartTurn
+        cond(
+          eq(nextAppliedKind, "confidence_collapse_reprobe"),
+          cond(gt(salvageStartTurn, 13), sub(salvageStartTurn, 2), 12),
+          cond(
+            eq(nextAppliedKind, "abandon_exploit_mode"),
+            cond(gt(salvageStartTurn, 13), sub(salvageStartTurn, 2), 12),
+            cond(
+              eq(nextAppliedKind, "force_disambiguation_question"),
+              cond(gt(salvageStartTurn, 13), sub(salvageStartTurn, 2), 12),
+              cond(
+                eq(nextAppliedKind, "belief_repair_probe"),
+                cond(gt(salvageStartTurn, 13), sub(salvageStartTurn, 2), 12),
+                salvageStartTurn
+              )
+            )
+          )
+        )
       )
     )
   )
   computed nextExploitThreshold = cond(
-    eq(bestRevisionKind, "cluster_closeout_bias"),
+    eq(nextAppliedKind, "cluster_closeout_bias"),
     cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.05), 0.4),
     cond(
-      eq(bestRevisionKind, "reopen_local_probe"),
-      cond(gt(exploitThreshold, 0.5), sub(exploitThreshold, 0.05), 0.45),
+      eq(nextAppliedKind, "reopen_local_probe"),
+      cond(gt(exploitThreshold, 0.5), sub(exploitThreshold, 0.1), 0.45),
       cond(
-        eq(bestRevisionKind, "confidence_collapse_reprobe"),
-        cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.05), 0.4),
-        exploitThreshold
+        eq(nextAppliedKind, "confidence_collapse_reprobe"),
+        cond(gt(exploitThreshold, 0.5), sub(exploitThreshold, 0.1), 0.4),
+        cond(
+          eq(nextAppliedKind, "abandon_exploit_mode"),
+          cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.15), 0.35),
+          cond(
+            eq(nextAppliedKind, "force_disambiguation_question"),
+            cond(gt(exploitThreshold, 0.45), sub(exploitThreshold, 0.15), 0.35),
+            cond(
+              eq(nextAppliedKind, "belief_repair_probe"),
+              cond(gt(exploitThreshold, 0.4), sub(exploitThreshold, 0.2), 0.3),
+              exploitThreshold
+            )
+          )
+        )
       )
     )
   )
@@ -323,7 +477,15 @@ domain BattleshipReflective {
     positiveRevisionPreview,
     neq(nextRevisionKind, "")
   )
-  computed shouldRevisePolicy = and(revisionEnabled, revisionRequested)
+  computed appliedRepairKind = cond(
+    or(
+      eq(lastRevisionReason, "abandon_exploit_mode"),
+      or(eq(lastRevisionReason, "force_disambiguation_question"), eq(lastRevisionReason, "belief_repair_probe"))
+    ),
+    lastRevisionReason,
+    ""
+  )
+  computed shouldRevisePolicy = and(revisionEnabled, or(revisionRequested, policyRepairRequested))
 
   computed canShoot = and(eq(phase, "playing"), gt(shotsRemaining, 0))
 
@@ -382,6 +544,19 @@ domain BattleshipReflective {
     }
   }
 
+  action configurePolicyDoubt(
+    nextPolicyDoubtThreshold: number,
+    nextPolicyRepairEnabled: boolean
+  ) available when eq(phase, "playing") {
+    when lt(nextPolicyDoubtThreshold, 0) {
+      fail "INVALID_POLICY_DOUBT_THRESHOLD"
+    }
+    onceIntent {
+      patch policyDoubtThreshold = nextPolicyDoubtThreshold
+      patch policyRepairEnabled = nextPolicyRepairEnabled
+    }
+  }
+
   action shoot(cellId: string)
     available when canShoot
     dispatchable when eq(coalesce(findById(cells, cellId).status, ""), "unknown") {
@@ -423,12 +598,18 @@ domain BattleshipReflective {
         coarseQuestionsUsed
       )
       patch localQuestionsUsed = cond(
-        eq(currentQuestionBucket, "local"),
+        or(
+          eq(currentQuestionBucket, "local"),
+          and(eq(questionFamilyMode, "repair"), localBudgetOpen)
+        ),
         add(localQuestionsUsed, 1),
         localQuestionsUsed
       )
       patch lateQuestionsUsed = cond(
-        eq(currentQuestionBucket, "late"),
+        or(
+          eq(currentQuestionBucket, "late"),
+          and(eq(questionFamilyMode, "repair"), and(not(localBudgetOpen), lateBudgetOpen))
+        ),
         add(lateQuestionsUsed, 1),
         lateQuestionsUsed
       )
@@ -485,7 +666,10 @@ domain BattleshipReflective {
     previewLateDiffuseValue: number,
     previewClusterCloseoutValue: number,
     previewReopenLocalProbeValue: number,
-    previewConfidenceCollapseReprobeValue: number
+    previewConfidenceCollapseReprobeValue: number,
+    previewAbandonExploitValue: number,
+    previewForceDisambiguationValue: number,
+    previewBeliefRepairProbeValue: number
   ) available when eq(phase, "playing") {
     onceIntent {
       patch currentPolicyPreviewValue = previewCurrentPolicyValue
@@ -494,6 +678,9 @@ domain BattleshipReflective {
       patch clusterCloseoutPreviewValue = previewClusterCloseoutValue
       patch reopenLocalProbePreviewValue = previewReopenLocalProbeValue
       patch confidenceCollapseReprobePreviewValue = previewConfidenceCollapseReprobeValue
+      patch abandonExploitPreviewValue = previewAbandonExploitValue
+      patch forceDisambiguationPreviewValue = previewForceDisambiguationValue
+      patch beliefRepairProbePreviewValue = previewBeliefRepairProbeValue
     }
   }
 
@@ -592,6 +779,38 @@ domain BattleshipReflective {
         add(exploitLockStreak, 1),
         0
       )
+      patch policyRegretEMA = cond(
+        eq(observedTurnCount, 0),
+        cond(
+          gt(predictedGain, realizedGain),
+          sub(predictedGain, realizedGain),
+          0
+        ),
+        div(
+          add(
+            mul(policyRegretEMA, 3),
+            cond(
+              gt(predictedGain, realizedGain),
+              sub(predictedGain, realizedGain),
+              0
+            )
+          ),
+          4
+        )
+      )
+      patch policyStagnationStreak = cond(
+        and(gt(predictedGain, 0), lte(realizedGain, div(predictedGain, 4))),
+        add(policyStagnationStreak, 1),
+        0
+      )
+      patch revisionFailureStreak = cond(
+        and(
+          neq(lastRevisionReason, ""),
+          and(gt(predictedGain, 0), lte(realizedGain, div(predictedGain, 4)))
+        ),
+        add(revisionFailureStreak, 1),
+        cond(gt(realizedGain, predictedGain), 0, revisionFailureStreak)
+      )
       patch revisionCooldownRemaining = cond(
         gt(revisionCooldownRemaining, 0),
         sub(revisionCooldownRemaining, 1),
@@ -621,9 +840,11 @@ domain BattleshipReflective {
       patch salvageStartTurn = nextSalvageStartTurn
       patch exploitThreshold = nextExploitThreshold
       patch policyMode = nextPolicyMode
-      patch lastRevisionReason = bestRevisionKind
+      patch lastRevisionReason = nextAppliedKind
       patch lastRevisionSource = revisionSource
-      patch lastRevisionDelta = bestRevisionDelta
+      patch lastRevisionDelta = nextAppliedDelta
+      patch lastAppliedPolicyMode = nextPolicyMode
+      patch lastAppliedPolicyValue = currentPolicyPreviewValue
       patch lastLLMRevisionFallback = fromLLMFallback
       patch revisionCount = add(revisionCount, 1)
       patch llmRevisionCount = cond(
@@ -674,7 +895,9 @@ domain BattleshipReflective {
       patch policyMode = nextMode
       patch lastRevisionReason = revisionKind
       patch lastRevisionSource = revisionSource
-      patch lastRevisionDelta = bestRevisionDelta
+      patch lastRevisionDelta = nextAppliedDelta
+      patch lastAppliedPolicyMode = nextMode
+      patch lastAppliedPolicyValue = currentPolicyPreviewValue
       patch lastLLMRevisionFallback = fromLLMFallback
       patch revisionCount = add(revisionCount, 1)
       patch llmRevisionCount = cond(

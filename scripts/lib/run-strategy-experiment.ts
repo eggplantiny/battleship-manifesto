@@ -45,6 +45,7 @@ export interface StrategyExperimentOptions {
   revisionEnabled?: boolean;
   llmRevisionEnabled?: boolean;
   llmRevisionBudget?: number;
+  policyDoubtThreshold?: number;
   protocol?: ProtocolName;
   onGameComplete?: (args: {
     boardId: string;
@@ -84,6 +85,7 @@ export interface ResolvedStrategyExperimentOptions {
   revisionEnabled?: boolean;
   llmRevisionEnabled?: boolean;
   llmRevisionBudget?: number;
+  policyDoubtThreshold?: number;
   protocolName: ProtocolName;
 }
 
@@ -164,6 +166,7 @@ export function resolveStrategyExperimentOptions(
     revisionEnabled: options.revisionEnabled,
     llmRevisionEnabled: options.llmRevisionEnabled,
     llmRevisionBudget: options.llmRevisionBudget,
+    policyDoubtThreshold: options.policyDoubtThreshold,
     protocolName,
   };
 }
@@ -185,7 +188,7 @@ function strategyUsesWorldRuntime(strategyName: StrategyName): boolean {
 }
 
 function strategyUsesReflectiveRuntime(strategyName: StrategyName): boolean {
-  return strategyName === "mra" || strategyName === "cra" || strategyName === "mra-llm";
+  return strategyName === "mra" || strategyName === "cra" || strategyName === "rma" || strategyName === "mra-llm";
 }
 
 export async function runStrategyExperiment(
@@ -215,6 +218,7 @@ export async function runStrategyExperiment(
     revisionEnabled: resolved.revisionEnabled,
     llmRevisionEnabled: resolved.llmRevisionEnabled,
     llmRevisionBudget: resolved.llmRevisionBudget,
+    policyDoubtThreshold: resolved.policyDoubtThreshold,
   });
   const logger = createFileExperimentLogger(
     {

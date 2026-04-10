@@ -16,25 +16,16 @@ The public strategy line built on top of that progression is:
 - `cra`: counterfactual preview-gated symbolic revision
 - `mra-llm`: sparse LLM-guided revision on top of the same reflective runtime
 
-## LLM Providers
+## If You Are Here From The Paper
 
-LLM-capable strategies are no longer tied to Ollama. This repo now supports:
+Use this path first:
 
-- `ollama`
-- `openai`
+1. [docs/how-to-run.md](./docs/how-to-run.md) for install and non-LLM reproduction
+2. [docs/how-to-analyze.md](./docs/how-to-analyze.md) for log inspection with `log:lens`
+3. [docs/llm-setup.md](./docs/llm-setup.md) for `ollama` or `openai` wiring
+4. [docs/manifesto-guide.md](./docs/manifesto-guide.md) for the Manifesto-specific code structure
 
-Defaults:
-
-- provider default: `ollama`
-- Ollama URL default: `OLLAMA_BASE_URL` or `http://localhost:11434`
-- OpenAI URL default: `OPENAI_BASE_URL` or `https://api.openai.com/v1`
-- OpenAI API key: `OPENAI_API_KEY`
-
-This means you can:
-
-- keep using local Ollama
-- point to a remote or Dockerized Ollama instance via `OLLAMA_BASE_URL`
-- switch revision or decision paths to OpenAI via CLI flags
+You do not need internal data or API access to run the public non-LLM baselines in this repository.
 
 ## Start Here
 
@@ -94,20 +85,24 @@ npx pnpm@10.33.0 install
 npx pnpm@10.33.0 check
 ```
 
-Run a one-board smoke test:
+Run a one-board smoke test with no LLM dependency:
 
 ```bash
 pnpm run exp:run -- --strategy mra --revision-enabled true --boards B17 --seeds 1 --protocol paper --belief mcmc --particles 500 --label smoke-mra-b17
 ```
 
-Inspect the result:
+Inspect the result with the repository-standard lens:
 
 ```bash
 pnpm run log:lens -- --view run --run latest
 pnpm run log:lens -- --view confidence --run latest --game B17-seed0
 ```
 
-## Common Runs
+Run artifacts are written under `results/runs/<run-id>`.
+
+## Reproduce Public Runs
+
+The public commands below pin `--belief mcmc --particles 500` explicitly so external readers can rerun the same setup shown in the repo documentation.
 
 Greedy baseline:
 
@@ -133,7 +128,33 @@ Counterfactual reflective baseline:
 pnpm run exp:run -- --strategy cra --revision-enabled true --min-revision-delta 0.01 --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label cra-all3
 ```
 
-Reflective agent with sparse LLM revision:
+Compare two finished runs:
+
+```bash
+pnpm run log:lens -- --view compare --run <primary-run> --compare-run <baseline-run>
+```
+
+## LLM Providers
+
+LLM-capable strategies support:
+
+- `ollama`
+- `openai`
+
+Defaults:
+
+- provider default: `ollama`
+- Ollama URL default: `OLLAMA_BASE_URL` or `http://localhost:11434`
+- OpenAI URL default: `OPENAI_BASE_URL` or `https://api.openai.com/v1`
+- OpenAI API key: `OPENAI_API_KEY`
+
+Use [docs/llm-setup.md](./docs/llm-setup.md) for the detailed setup path. The short version is:
+
+- use non-LLM strategies like `greedy`, `wma`, `mra`, or `cra` if you want a zero-API reproduction path
+- use `OLLAMA_BASE_URL` for local, remote, or Dockerized Ollama
+- use `OPENAI_API_KEY` plus provider flags when you want OpenAI-backed revision or planning
+
+Reflective agent with sparse LLM revision through Ollama:
 
 ```bash
 pnpm run exp:run -- --strategy mra-llm --decision-model gemma4:e4b --model gemma4:e4b --confidence-threshold 1.0 --boards all --seeds 3 --protocol paper --belief mcmc --particles 500 --label mra-llm-all3
@@ -228,6 +249,7 @@ Per repository policy in [AGENTS.md](./AGENTS.md), raw run logs should not be th
 - [docs/architecture.md](./docs/architecture.md)
 - [docs/how-to-run.md](./docs/how-to-run.md)
 - [docs/how-to-analyze.md](./docs/how-to-analyze.md)
+- [docs/llm-setup.md](./docs/llm-setup.md)
 
 ## Packages
 
